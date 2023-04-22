@@ -27,7 +27,7 @@ resource "cosign_verify" "example" {
 resource "ko_build" "image-build" {
   base_image  = cosign_verify.example.verified_ref
   importpath  = "..."
-  repo        = var.where-to-public
+  repo        = var.where-to-publish
 }
 
 # Sign the produced image!
