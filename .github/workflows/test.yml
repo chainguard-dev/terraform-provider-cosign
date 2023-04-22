@@ -1,6 +1,6 @@
 name: Tests
 on:
-  pull_request:
+  pull_request_target:
     branches: ['main']
   push:
     branches: ['main']
@@ -30,6 +30,11 @@ jobs:
         - '1.2.*'
         - '1.1.*'
         - '1.0.*'
+
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-go@v4
