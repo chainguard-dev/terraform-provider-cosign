@@ -18,12 +18,44 @@ func TestAccResourceCosignSign(t *testing.T) {
 			Config: fmt.Sprintf(`
 resource "cosign_sign" "foo" {
   image = %q
-}`, digest),
+}
+
+resource "cosign_verify" "bar" {
+  image  = cosign_sign.foo.signed_ref
+  policy = jsonencode({
+    apiVersion = "policy.sigstore.dev/v1beta1"
+    kind       = "ClusterImagePolicy"
+    metadata = {
+      name = "signed-it"
+    }
+    spec = {
+      images = [{
+        glob = %q
+      }]
+      authorities = [{
+        keyless = {
+          url = "https://fulcio.sigstore.dev"
+          identities = [{
+            issuer  = "https://token.actions.githubusercontent.com"
+            subject = "https://github.com/mattmoor/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+          }]
+        }
+        ctlog = {
+          url = "https://rekor.sigstore.dev"
+        }
+      }]
+    }
+  })
+}
+`, digest, digest),
 			Check: resource.ComposeTestCheckFunc(
 				resource.TestMatchResourceAttr(
 					"cosign_sign.foo", "image", regexp.MustCompile("^"+digest)),
 				resource.TestMatchResourceAttr(
 					"cosign_sign.foo", "signed_ref", regexp.MustCompile("^"+digest)),
+				// Check that it got signed!
+				resource.TestMatchResourceAttr(
+					"cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+digest)),
 			),
 		}},
 	})

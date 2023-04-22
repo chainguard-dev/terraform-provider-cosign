@@ -50,4 +50,32 @@ resource "cosign_verify" "foo" {
 			),
 		}},
 	})
+
+	resource.UnitTest(t, resource.TestCase{
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{{
+			Config: fmt.Sprintf(`
+resource "cosign_verify" "foo" {
+  image  = %q
+  policy = jsonencode({
+    apiVersion = "policy.sigstore.dev/v1beta1"
+    kind       = "ClusterImagePolicy"
+    metadata = {
+      name = "chainguard-images-are-signed"
+    }
+    spec = {
+      images = [{
+        glob = "cgr.dev/chainguard/**"
+      }]
+      authorities = [{
+        static = {
+          action = "fail"
+        }
+      }]
+    }
+  })
+}`, repo),
+			ExpectError: regexp.MustCompile("disallowed by static policy"),
+		}},
+	})
 }
