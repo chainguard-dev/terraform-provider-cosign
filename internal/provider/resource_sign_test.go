@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 )
 
-func TestAccResourceApkoBuild(t *testing.T) {
+func TestAccResourceCosignSign(t *testing.T) {
 	digest := os.Getenv("TEST_IMAGE")
 
 	resource.UnitTest(t, resource.TestCase{
