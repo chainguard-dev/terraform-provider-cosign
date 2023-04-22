@@ -7,7 +7,7 @@ import (
 )
 
 var providerFactories = map[string]func() (*schema.Provider, error){
-	"apko": func() (*schema.Provider, error) {
+	"cosign": func() (*schema.Provider, error) {
 		return New("dev")(), nil
 	},
 }

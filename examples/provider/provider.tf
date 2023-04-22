@@ -1,1 +1,1 @@
-provider "apko" {}
+provider "cosign" {}
