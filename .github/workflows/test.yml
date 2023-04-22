@@ -36,6 +36,7 @@ jobs:
       with:
         go-version: '1.18'
 
+    - uses: imjasonh/setup-crane@v0.3
     - uses: chainguard-dev/actions/setup-registry@main
       with:
         port: 5000
@@ -47,4 +48,8 @@ jobs:
 
     - run: go mod download
     - run: go build -v .
-    - run: TEST_REPOSITORY=localhost:5000/apko-testing TF_ACC=1 go test -v -cover ./internal/provider/
+    - run: |
+        crane copy --insecure cgr.dev/chainguard/static:latest-glibc localhost:5000/cosign-testing
+        export TEST_IMAGE=localhost:5000/cosign-testing@$(crane digest --insecure localhost:5000/cosign-testing)
+
+        TF_ACC=1 go test -v -cover ./internal/provider/

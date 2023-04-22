@@ -28,7 +28,7 @@ func New(version string) func() *schema.Provider {
 		p := &schema.Provider{
 			Schema: map[string]*schema.Schema{},
 			ResourcesMap: map[string]*schema.Resource{
-				"apko_build": resourceApkoBuild(),
+				"cosign_sign": resourceCosignSign(),
 			},
 		}
 		p.ConfigureContextFunc = configure(version, p)
