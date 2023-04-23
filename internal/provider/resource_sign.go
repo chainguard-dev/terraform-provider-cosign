@@ -7,6 +7,9 @@ import (
 	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
+	"github.com/sigstore/cosign/v2/cmd/cosign/cli/sign"
+	"github.com/sigstore/cosign/v2/pkg/providers"
 )
 
 func resourceCosignSign() *schema.Resource {
@@ -47,7 +50,43 @@ func resourceCosignSignCreate(ctx context.Context, d *schema.ResourceData, _ int
 		return diag.FromErr(err)
 	}
 
-	// TODO: Do something.
+	if !providers.Enabled(ctx) {
+		return diag.Errorf("no ambient credentials are available to sign with.")
+	}
+
+	// TODO(mattmoor): Move these to be configuration options.
+	const (
+		fulcioURL = "https://fulcio.sigstore.dev"
+		rekorURL  = "https://rekor.sigstore.dev"
+	)
+
+	ropts := &options.RootOptions{
+		Timeout: options.DefaultTimeout,
+	}
+	kopts := options.KeyOpts{
+		FulcioURL:        fulcioURL,
+		RekorURL:         rekorURL,
+		SkipConfirmation: true,
+	}
+	sopts := options.SignOptions{
+		SkipConfirmation: true,
+		Fulcio: options.FulcioOptions{
+			URL: fulcioURL,
+		},
+		Rekor: options.RekorOptions{
+			URL: rekorURL,
+		},
+		Recursive:  true,
+		Upload:     true,
+		TlogUpload: true,
+		Registry: options.RegistryOptions{
+			KubernetesKeychain: true,
+		},
+	}
+
+	if err := sign.SignCmd(ropts, kopts, sopts, []string{digest.String()}); err != nil {
+		return diag.FromErr(err)
+	}
 
 	d.Set("signed_ref", digest.String())
 	d.SetId(digest.String())
@@ -60,7 +99,7 @@ func resourceCosignSignRead(ctx context.Context, d *schema.ResourceData, _ inter
 		return diag.FromErr(err)
 	}
 
-	// TODO: Do something.
+	// TODO(mattmoor): should we check that the signature didn't disappear?
 
 	d.Set("signed_ref", digest.String())
 	d.SetId(digest.String())
