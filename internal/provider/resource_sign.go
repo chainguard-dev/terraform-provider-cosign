@@ -51,7 +51,12 @@ func resourceCosignSignCreate(ctx context.Context, d *schema.ResourceData, _ int
 	}
 
 	if !providers.Enabled(ctx) {
-		return diag.Errorf("no ambient credentials are available to sign with.")
+		d.Set("signed_ref", digest.String())
+		d.SetId(digest.String())
+		return diag.Diagnostics{{
+			Severity: diag.Warning,
+			Summary:  "no ambient credentials are available to sign with, skipping signing.",
+		}}
 	}
 
 	// TODO(mattmoor): Move these to be configuration options.
