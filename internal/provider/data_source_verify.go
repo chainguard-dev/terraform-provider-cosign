@@ -13,13 +13,11 @@ import (
 	"github.com/sigstore/policy-controller/pkg/policy"
 )
 
-func resourceCosignVerify() *schema.Resource {
+func dataSourceCosignVerify() *schema.Resource {
 	return &schema.Resource{
 		Description: "This verifies the provided image against the specified policy.",
 
-		CreateContext: resourceCosignVerifyCreate,
-		ReadContext:   resourceCosignVerifyRead,
-		DeleteContext: resourceCosignVerifyDelete,
+		ReadContext: dataSourceCosignVerifyRead,
 
 		Schema: map[string]*schema.Schema{
 			"image": {
@@ -84,7 +82,7 @@ func buildVerifier(ctx context.Context, body string, ww policy.WarningWriter) (p
 	return vfy, nil
 }
 
-func resourceCosignVerifyCreate(ctx context.Context, d *schema.ResourceData, _ interface{}) diag.Diagnostics {
+func dataSourceCosignVerifyRead(ctx context.Context, d *schema.ResourceData, _ interface{}) diag.Diagnostics {
 	ref, err := name.ParseReference(d.Get("image").(string))
 	if err != nil {
 		return diag.FromErr(err)
@@ -110,33 +108,4 @@ func resourceCosignVerifyCreate(ctx context.Context, d *schema.ResourceData, _ i
 
 	// Return any diagnostics the warning collector accumulated.
 	return diag.Diagnostics(wc)
-}
-
-func resourceCosignVerifyRead(ctx context.Context, d *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	ref, err := name.ParseReference(d.Get("image").(string))
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	digest, err := ociremote.ResolveDigest(ref)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	previousDigest := d.Get("verified_ref").(string)
-	if previousDigest != digest.String() {
-		// This signals that the verification should happen again because the
-		// underlying digest changed.
-		d.SetId("")
-		return nil
-	}
-
-	d.Set("verified_ref", digest.String())
-	d.SetId(digest.String())
-	return nil
-}
-
-func resourceCosignVerifyDelete(ctx context.Context, d *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	// TODO: If we ever want to delete the image from the registry, we can do it here.
-	return nil
 }

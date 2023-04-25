@@ -27,9 +27,11 @@ func New(version string) func() *schema.Provider {
 	return func() *schema.Provider {
 		p := &schema.Provider{
 			Schema: map[string]*schema.Schema{},
+			DataSourcesMap: map[string]*schema.Resource{
+				"cosign_verify": dataSourceCosignVerify(),
+			},
 			ResourcesMap: map[string]*schema.Resource{
-				"cosign_sign":   resourceCosignSign(),
-				"cosign_verify": resourceCosignVerify(),
+				"cosign_sign": resourceCosignSign(),
 			},
 		}
 		p.ConfigureContextFunc = configure(version, p)

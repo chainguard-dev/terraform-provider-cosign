@@ -15,7 +15,7 @@ func TestAccResourceCosignVerify(t *testing.T) {
 		ProviderFactories: providerFactories,
 		Steps: []resource.TestStep{{
 			Config: fmt.Sprintf(`
-resource "cosign_verify" "foo" {
+data "cosign_verify" "foo" {
   image  = %q
   policy = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
@@ -44,9 +44,9 @@ resource "cosign_verify" "foo" {
 }`, repo),
 			Check: resource.ComposeTestCheckFunc(
 				resource.TestMatchResourceAttr(
-					"cosign_verify.foo", "image", regexp.MustCompile("^"+repo)),
+					"data.cosign_verify.foo", "image", regexp.MustCompile("^"+repo)),
 				resource.TestMatchResourceAttr(
-					"cosign_verify.foo", "verified_ref", regexp.MustCompile("^"+repo+"@sha256:")),
+					"data.cosign_verify.foo", "verified_ref", regexp.MustCompile("^"+repo+"@sha256:")),
 			),
 		}},
 	})
@@ -55,7 +55,7 @@ resource "cosign_verify" "foo" {
 		ProviderFactories: providerFactories,
 		Steps: []resource.TestStep{{
 			Config: fmt.Sprintf(`
-resource "cosign_verify" "foo" {
+data "cosign_verify" "foo" {
   image  = %q
   policy = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"

@@ -20,7 +20,7 @@ resource "cosign_sign" "foo" {
   image = %q
 }
 
-resource "cosign_verify" "bar" {
+data "cosign_verify" "bar" {
   image  = cosign_sign.foo.signed_ref
   policy = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
@@ -55,7 +55,7 @@ resource "cosign_verify" "bar" {
 					"cosign_sign.foo", "signed_ref", regexp.MustCompile("^"+digest)),
 				// Check that it got signed!
 				resource.TestMatchResourceAttr(
-					"cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+digest)),
+					"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+digest)),
 			),
 		}},
 	})
