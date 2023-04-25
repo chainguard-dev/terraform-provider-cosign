@@ -2,7 +2,7 @@
 
 🚨 **This is a work in progress.** 🚨
 
-https://registry.terraform.io/providers/mattmoor/cosign
+https://registry.terraform.io/providers/chainguard-dev/cosign
 
 ## Usage
 

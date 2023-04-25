@@ -1,4 +1,4 @@
-module github.com/mattmoor/terraform-provider-cosign
+module github.com/chainguard-dev/terraform-provider-cosign
 
 go 1.19
 
