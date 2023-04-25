@@ -1,3 +1,2 @@
-provider "scaffolding" {
-  # example configuration here
+provider "cosign" {
 }
