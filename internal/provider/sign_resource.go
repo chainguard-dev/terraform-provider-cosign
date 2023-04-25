@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -41,11 +43,18 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "This signs the provided image digest with cosign.",
 		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The immutable digest this resource signs.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"image": schema.StringAttribute{
 				MarkdownDescription: "The digest of the container image to sign.",
 				Optional:            false,
 				Required:            true,
-				Validators:          []validator.String{refValidator{}},
+				Validators:          []validator.String{digestValidator{}},
 			},
 			"signed_ref": schema.StringAttribute{
 				MarkdownDescription: "This always matches the input digest, but is a convenience for composition.",
@@ -90,9 +99,9 @@ func doSign(ctx context.Context, data *SignResourceModel) (string, error) {
 		Rekor: options.RekorOptions{
 			URL: rekorURL,
 		},
-		Recursive: true,
-		Upload:    true,
-		//TlogUpload: true,
+		Recursive:  true,
+		Upload:     true,
+		TlogUpload: true,
 		Registry: options.RegistryOptions{
 			KubernetesKeychain: true,
 		},
