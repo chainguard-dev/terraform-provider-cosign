@@ -14,7 +14,7 @@ provider "cosign" {}
 
 # Verify the Chainguard base image against a policy from
 # github.com/sigstore/policy-controller.
-resource "cosign_verify" "example" {
+data "cosign_verify" "example" {
   image  = "cgr.dev/chainguard/static:latest-glibc"
 
   # This can also be inlined or fetched from a URL using the "http" data source
@@ -25,7 +25,7 @@ resource "cosign_verify" "example" {
 # This is simply for illustration purposes!
 # see: https://github.com/ko-build/terraform-provider-ko
 resource "ko_build" "image-build" {
-  base_image  = cosign_verify.example.verified_ref
+  base_image  = data.cosign_verify.example.verified_ref
   importpath  = "..."
   repo        = var.where-to-publish
 }
