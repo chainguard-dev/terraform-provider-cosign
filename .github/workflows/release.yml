@@ -3,6 +3,9 @@ on:
   push:
     tags:
       - 'v*'
+      
+permissions: write-all # To be able to add artifacts to releases
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
