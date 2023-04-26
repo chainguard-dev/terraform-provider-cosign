@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"testing"
 
@@ -12,6 +13,10 @@ import (
 )
 
 func TestAccResourceCosignSign(t *testing.T) {
+	if _, ok := os.LookupEnv("ACTIONS_ID_TOKEN_REQUEST_URL"); !ok {
+		t.Skip("Unable to keylessly sign without an actions token")
+	}
+
 	repo, cleanup := ocitesting.SetupRepository(t, "test")
 	defer cleanup()
 
@@ -70,7 +75,7 @@ data "cosign_verify" "bar" {
           url = "https://fulcio.sigstore.dev"
           identities = [{
             issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/imjasonh/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
           }]
         }
         ctlog = {
@@ -116,7 +121,7 @@ data "cosign_verify" "bar" {
           url = "https://fulcio.sigstore.dev"
           identities = [{
             issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/imjasonh/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
           }]
         }
         ctlog = {

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"testing"
 
@@ -13,6 +14,10 @@ import (
 )
 
 func TestAccResourceCosignAttest(t *testing.T) {
+	if _, ok := os.LookupEnv("ACTIONS_ID_TOKEN_REQUEST_URL"); !ok {
+		t.Skip("Unable to keylessly attest without an actions token")
+	}
+
 	repo, cleanup := ocitesting.SetupRepository(t, "test")
 	defer cleanup()
 
@@ -25,7 +30,8 @@ func TestAccResourceCosignAttest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.Write(repo.Digest(dig1.String()), img1); err != nil {
+	ref1 := repo.Digest(dig1.String())
+	if err := remote.Write(ref1, img1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,7 +43,8 @@ func TestAccResourceCosignAttest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.Write(repo.Digest(dig2.String()), img2); err != nil {
+	ref2 := repo.Digest(dig2.String())
+	if err := remote.Write(ref2, img2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +84,7 @@ data "cosign_verify" "bar" {
           url = "https://fulcio.sigstore.dev"
           identities = [{
             issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/imjasonh/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
           }]
         }
         attestations = [{
@@ -104,15 +111,15 @@ data "cosign_verify" "bar" {
     }
   })
 }
-`, dig1, url, value, dig1, url, url, value),
+`, ref1, url, value, ref1, url, url, value),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestMatchResourceAttr(
-						"cosign_attest.foo", "image", regexp.MustCompile("^"+dig1.String())),
+						"cosign_attest.foo", "image", regexp.MustCompile("^"+ref1.String())),
 					resource.TestMatchResourceAttr(
-						"cosign_attest.foo", "attested_ref", regexp.MustCompile("^"+dig1.String())),
+						"cosign_attest.foo", "attested_ref", regexp.MustCompile("^"+ref1.String())),
 					// Check that it got attested!
 					resource.TestMatchResourceAttr(
-						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+dig1.String())),
+						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
 				),
 			},
 
@@ -144,7 +151,7 @@ data "cosign_verify" "bar" {
           url = "https://fulcio.sigstore.dev"
           identities = [{
             issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/imjasonh/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
           }]
         }
         attestations = [{
@@ -171,15 +178,15 @@ data "cosign_verify" "bar" {
     }
   })
 }
-`, dig2, url, value, dig2, url, url, value),
+`, ref2, url, value, ref2, url, url, value),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestMatchResourceAttr(
-						"cosign_attest.foo", "image", regexp.MustCompile("^"+dig2.String())),
+						"cosign_attest.foo", "image", regexp.MustCompile("^"+ref2.String())),
 					resource.TestMatchResourceAttr(
-						"cosign_attest.foo", "attested_ref", regexp.MustCompile("^"+dig2.String())),
+						"cosign_attest.foo", "attested_ref", regexp.MustCompile("^"+ref2.String())),
 					// Check that it got attested!
 					resource.TestMatchResourceAttr(
-						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+dig2.String())),
+						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref2.String())),
 				),
 			},
 		},
