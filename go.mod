@@ -3,7 +3,7 @@ module github.com/chainguard-dev/terraform-provider-cosign
 go 1.19
 
 require (
-	github.com/chainguard-dev/terraform-provider-oci v0.0.0-20230425204147-f48901367805
+	github.com/chainguard-dev/terraform-provider-oci v0.0.0-20230426201150-f82273dff08e
 	github.com/google/go-containerregistry v0.14.1-0.20230409045903-ed5c185df419
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/terraform-plugin-docs v0.14.1
