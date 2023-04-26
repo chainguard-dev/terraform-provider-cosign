@@ -58,18 +58,27 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional:            false,
 				Required:            true,
 				Validators:          []validator.String{digestValidator{}},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"predicate_type": schema.StringAttribute{
 				MarkdownDescription: "The in-toto predicate type of the claim being attested.",
 				Optional:            false,
 				Required:            true,
 				Validators:          []validator.String{urlValidator{}},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"predicate": schema.StringAttribute{
 				MarkdownDescription: "The JSON body of the in-toto predicate's claim.",
 				Optional:            false,
 				Required:            true,
 				Validators:          []validator.String{jsonValidator{}},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"attested_ref": schema.StringAttribute{
 				MarkdownDescription: "This always matches the input digest, but is a convenience for composition.",
@@ -82,14 +91,14 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 func (r *AttestResource) Configure(context.Context, resource.ConfigureRequest, *resource.ConfigureResponse) {
 }
 
-func doAttest(ctx context.Context, data *AttestResourceModel) (string, error) {
+func doAttest(ctx context.Context, data *AttestResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
-		return "", errors.New("Unable to parse image digest")
+		return "", nil, errors.New("Unable to parse image digest")
 	}
 
 	if !providers.Enabled(ctx) {
-		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting.")
+		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting."), nil
 	}
 
 	// TODO(mattmoor): Move these to be configuration options.
@@ -101,14 +110,14 @@ func doAttest(ctx context.Context, data *AttestResourceModel) (string, error) {
 	// Write the attestation to a temporary file.
 	file, err := os.CreateTemp("", "")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer os.Remove(file.Name())
 	if _, err := file.WriteString(data.Predicate.ValueString()); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if err := file.Close(); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	ac := attest.AttestCommand{
@@ -127,9 +136,9 @@ func doAttest(ctx context.Context, data *AttestResourceModel) (string, error) {
 		TlogUpload:    true,
 	}
 	if err := ac.Exec(ctx, digest.String()); err != nil {
-		return "", fmt.Errorf("Unable to sign image: %w", err)
+		return "", nil, fmt.Errorf("Unable to sign image: %w", err)
 	}
-	return digest.String(), nil
+	return digest.String(), nil, nil
 }
 
 func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -139,10 +148,12 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	digest, err := doAttest(ctx, data)
+	digest, warning, err := doAttest(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", err.Error())
+		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
+	} else if warning != nil {
+		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -179,10 +190,12 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	digest, err := doAttest(ctx, data)
+	digest, warning, err := doAttest(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", err.Error())
+		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
+	} else if warning != nil {
+		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)

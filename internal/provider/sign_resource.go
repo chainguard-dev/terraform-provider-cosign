@@ -55,6 +55,9 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            false,
 				Required:            true,
 				Validators:          []validator.String{digestValidator{}},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"signed_ref": schema.StringAttribute{
 				MarkdownDescription: "This always matches the input digest, but is a convenience for composition.",
@@ -67,14 +70,14 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 func (r *SignResource) Configure(context.Context, resource.ConfigureRequest, *resource.ConfigureResponse) {
 }
 
-func doSign(ctx context.Context, data *SignResourceModel) (string, error) {
+func doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
-		return "", errors.New("Unable to parse image digest")
+		return "", nil, errors.New("Unable to parse image digest")
 	}
 
 	if !providers.Enabled(ctx) {
-		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing.")
+		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing."), nil
 	}
 
 	// TODO(mattmoor): Move these to be configuration options.
@@ -108,9 +111,9 @@ func doSign(ctx context.Context, data *SignResourceModel) (string, error) {
 	}
 
 	if err := sign.SignCmd(ropts, kopts, sopts, []string{digest.String()}); err != nil {
-		return "", fmt.Errorf("Unable to sign image: %w", err)
+		return "", nil, fmt.Errorf("Unable to sign image: %w", err)
 	}
-	return digest.String(), nil
+	return digest.String(), nil, nil
 }
 
 func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -120,10 +123,12 @@ func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	digest, err := doSign(ctx, data)
+	digest, warning, err := doSign(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", err.Error())
+		resp.Diagnostics.AddError("error while signing", err.Error())
 		return
+	} else if warning != nil {
+		resp.Diagnostics.AddWarning("warning while signing", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -160,10 +165,12 @@ func (r *SignResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	digest, err := doSign(ctx, data)
+	digest, warning, err := doSign(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", err.Error())
+		resp.Diagnostics.AddError("error while signing", err.Error())
 		return
+	} else if warning != nil {
+		resp.Diagnostics.AddWarning("warning while signing", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
