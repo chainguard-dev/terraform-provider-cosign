@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 
+	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -43,7 +44,7 @@ func (d *VerifyDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 			"image": schema.StringAttribute{
 				MarkdownDescription: "The image tag or digest of the container image to verify.",
 				Required:            true,
-				Validators:          []validator.String{refValidator{}},
+				Validators:          []validator.String{validators.RefValidator{}},
 			},
 			"policy": schema.StringAttribute{
 				MarkdownDescription: "The sigstore policy-controller policy to verify the image against.",

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -54,7 +55,7 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The digest of the container image to sign.",
 				Optional:            false,
 				Required:            true,
-				Validators:          []validator.String{digestValidator{}},
+				Validators:          []validator.String{validators.DigestValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},

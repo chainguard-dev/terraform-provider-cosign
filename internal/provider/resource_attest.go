@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -57,7 +58,7 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The digest of the container image to attest.",
 				Optional:            false,
 				Required:            true,
-				Validators:          []validator.String{digestValidator{}},
+				Validators:          []validator.String{validators.DigestValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -66,7 +67,7 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The in-toto predicate type of the claim being attested.",
 				Optional:            false,
 				Required:            true,
-				Validators:          []validator.String{urlValidator{}},
+				Validators:          []validator.String{validators.URLValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -75,7 +76,7 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The JSON body of the in-toto predicate's claim.",
 				Optional:            false,
 				Required:            true,
-				Validators:          []validator.String{jsonValidator{}},
+				Validators:          []validator.String{validators.JSONValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
