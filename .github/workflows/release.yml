@@ -4,7 +4,8 @@ on:
     tags:
       - 'v*'
       
-permissions: write-all # To be able to add artifacts to releases
+permissions:
+  contents: write # To be able to add artifacts to releases
 
 jobs:
   goreleaser:
