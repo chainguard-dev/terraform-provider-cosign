@@ -1,25 +1,37 @@
 name: Tests
+
 on:
   pull_request_target:
-    branches: ['main']
+    branches:
+      - 'main'
   push:
-    branches: ['main']
+    branches:
+      - 'main'
 
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-      with:
-        ref: refs/pull/${{ github.event.pull_request.number }}/merge
-    - uses: actions/setup-go@v4
-      with:
-        go-version: 1.20.x
-    - run: go generate ./...
-    - name: git diff
-      run: |
-        git diff --compact-summary --exit-code || \
-          (echo; echo "Unexpected difference in directories after code generation. Run 'go generate ./...' command and commit."; exit 1)
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
+        if: "contains(github.event_name, 'pull_request')"
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: checkout from push event
+        if: github.event_name == 'push'
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
+
+      - uses: actions/setup-go@4d34df0c2316fe8122ab82dc22947d607c0c91f9 # v4.0.0
+        with:
+          go-version: '1.20'
+          check-latest: true
+
+      - run: go generate ./...
+
+      - name: git diff
+        run: |
+          git diff --compact-summary --exit-code || \
+            (echo; echo "Unexpected difference in directories after code generation. Run 'go generate ./...' command and commit."; exit 1)
 
   test:
     name: Test
@@ -28,26 +40,37 @@ jobs:
       fail-fast: false
       matrix:
         terraform:
-        - '1.3.*'
-        - '1.2.*'
-        - '1.1.*'
-        - '1.0.*'
+          - '1.3.*'
+          - '1.2.*'
+          - '1.1.*'
+          - '1.0.*'
 
     permissions:
       contents: read
       id-token: write
 
     steps:
-    - uses: actions/checkout@v3
-      with:
-        ref: refs/pull/${{ github.event.pull_request.number }}/merge
-    - uses: actions/setup-go@v4
-      with:
-        go-version: 1.20.x
-    - uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: ${{ matrix.terraform }}
-        terraform_wrapper: false
-    - run: go mod download
-    - run: go build -v .
-    - run: TF_ACC=1 go test -v -cover ./internal/provider/
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
+        if: "contains(github.event_name, 'pull_request')"
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: checkout from push event
+        if: github.event_name == 'push'
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
+
+      - uses: actions/setup-go@4d34df0c2316fe8122ab82dc22947d607c0c91f9 # v4.0.0
+        with:
+          go-version: '1.20'
+          check-latest: true
+
+      - uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - run: go mod download
+
+      - run: go build -v .
+
+      - run: TF_ACC=1 go test -v -cover ./internal/provider/
