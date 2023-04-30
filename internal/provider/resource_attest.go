@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -21,14 +22,18 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/providers"
 )
 
-var _ resource.Resource = &AttestResource{}
-var _ resource.ResourceWithImportState = &AttestResource{}
+var (
+	_ resource.Resource                = &AttestResource{}
+	_ resource.ResourceWithImportState = &AttestResource{}
+)
 
 func NewAttestResource() resource.Resource {
 	return &AttestResource{}
 }
 
 type AttestResource struct {
+	FulcioURL types.String
+	RekorURL  types.String
 }
 
 type AttestResourceModel struct {
@@ -37,6 +42,8 @@ type AttestResourceModel struct {
 	PredicateType types.String `tfsdk:"predicate_type"`
 	Predicate     types.String `tfsdk:"predicate"`
 	AttestedRef   types.String `tfsdk:"attested_ref"`
+	FulcioURL     types.String `tfsdk:"fulcio_url"`
+	RekorURL      types.String `tfsdk:"rekor_url"`
 }
 
 func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -85,14 +92,28 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "This always matches the input digest, but is a convenience for composition.",
 				Computed:            true,
 			},
+			"fulcio_url": schema.StringAttribute{
+				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev).",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("https://fulcio.sigstore.dev"),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"rekor_url": schema.StringAttribute{
+				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev).",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
 		},
 	}
 }
 
-func (r *AttestResource) Configure(context.Context, resource.ConfigureRequest, *resource.ConfigureResponse) {
+func (r *AttestResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
 }
 
-func doAttest(ctx context.Context, data *AttestResourceModel) (string, error, error) {
+func doAttest(ctx context.Context, data *AttestResourceModel, config AttestResource) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("Unable to parse image digest")
@@ -101,12 +122,6 @@ func doAttest(ctx context.Context, data *AttestResourceModel) (string, error, er
 	if !providers.Enabled(ctx) {
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting."), nil
 	}
-
-	// TODO(mattmoor): Move these to be configuration options.
-	const (
-		fulcioURL = "https://fulcio.sigstore.dev"
-		rekorURL  = "https://rekor.sigstore.dev"
-	)
 
 	// Write the attestation to a temporary file.
 	file, err := os.CreateTemp("", "")
@@ -123,8 +138,8 @@ func doAttest(ctx context.Context, data *AttestResourceModel) (string, error, er
 
 	ac := attest.AttestCommand{
 		KeyOpts: options.KeyOpts{
-			FulcioURL:        fulcioURL,
-			RekorURL:         rekorURL,
+			FulcioURL:        data.FulcioURL.ValueString(),
+			RekorURL:         data.RekorURL.ValueString(),
 			SkipConfirmation: true,
 		},
 		RegistryOptions: options.RegistryOptions{
@@ -149,7 +164,12 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	digest, warning, err := doAttest(ctx, data)
+	config := AttestResource{
+		FulcioURL: r.FulcioURL,
+		RekorURL:  r.RekorURL,
+	}
+
+	digest, warning, err := doAttest(ctx, data, config)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
@@ -191,7 +211,12 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	digest, warning, err := doAttest(ctx, data)
+	config := AttestResource{
+		FulcioURL: r.FulcioURL,
+		RekorURL:  r.RekorURL,
+	}
+
+	digest, warning, err := doAttest(ctx, data, config)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return

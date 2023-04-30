@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -20,8 +21,10 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/providers"
 )
 
-var _ resource.Resource = &SignResource{}
-var _ resource.ResourceWithImportState = &SignResource{}
+var (
+	_ resource.Resource                = &SignResource{}
+	_ resource.ResourceWithImportState = &SignResource{}
+)
 
 func NewSignResource() resource.Resource {
 	return &SignResource{}
@@ -34,6 +37,8 @@ type SignResourceModel struct {
 	Id        types.String `tfsdk:"id"`
 	Image     types.String `tfsdk:"image"`
 	SignedRef types.String `tfsdk:"signed_ref"`
+	FulcioURL types.String `tfsdk:"fulcio_url"`
+	RekorURL  types.String `tfsdk:"rekor_url"`
 }
 
 func (r *SignResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -64,11 +69,25 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "This always matches the input digest, but is a convenience for composition.",
 				Computed:            true,
 			},
+			"fulcio_url": schema.StringAttribute{
+				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev).",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("https://fulcio.sigstore.dev"),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"rekor_url": schema.StringAttribute{
+				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev).",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
 		},
 	}
 }
 
-func (r *SignResource) Configure(context.Context, resource.ConfigureRequest, *resource.ConfigureResponse) {
+func (r *SignResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
 }
 
 func doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
@@ -81,27 +100,21 @@ func doSign(ctx context.Context, data *SignResourceModel) (string, error, error)
 		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing."), nil
 	}
 
-	// TODO(mattmoor): Move these to be configuration options.
-	const (
-		fulcioURL = "https://fulcio.sigstore.dev"
-		rekorURL  = "https://rekor.sigstore.dev"
-	)
-
 	ropts := &options.RootOptions{
 		Timeout: options.DefaultTimeout,
 	}
 	kopts := options.KeyOpts{
-		FulcioURL:        fulcioURL,
-		RekorURL:         rekorURL,
+		FulcioURL:        data.FulcioURL.ValueString(),
+		RekorURL:         data.RekorURL.ValueString(),
 		SkipConfirmation: true,
 	}
 	sopts := options.SignOptions{
 		SkipConfirmation: true,
 		Fulcio: options.FulcioOptions{
-			URL: fulcioURL,
+			URL: data.FulcioURL.ValueString(),
 		},
 		Rekor: options.RekorOptions{
-			URL: rekorURL,
+			URL: data.RekorURL.ValueString(),
 		},
 		Recursive:  true,
 		Upload:     true,
