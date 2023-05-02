@@ -19,6 +19,11 @@ This signs the provided image digest with cosign.
 
 - `image` (String) The digest of the container image to sign.
 
+### Optional
+
+- `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev).
+- `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev).
+
 ### Read-Only
 
 - `id` (String) The immutable digest this resource signs.

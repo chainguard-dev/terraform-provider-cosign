@@ -47,6 +47,19 @@ func TestAccResourceCosignSign(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	img3, err := random.Image(1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dig3, err := img3.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref3 := repo.Digest(dig3.String())
+	if err := remote.Write(ref3, img3); err != nil {
+		t.Fatal(err)
+	}
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
