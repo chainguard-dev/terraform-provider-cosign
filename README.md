@@ -18,6 +18,11 @@ data "cosign_verify" "example" {
 # Use "data.cosign_verify.example.verified_ref" in downstream rules (see below).
 ```
 
+See provider examples:
+
+- [ECS](./provider-examples/ecs/README.md)
+
+
 
 This provider also exposes `cosign_sign` and `cosign_attest` resources that will
 sign and attest a provided OCI digest, which is intended to compose with
