@@ -47,7 +47,7 @@ resource "cosign_sign" "foo" {
 }
 
 resource "cosign_attest" "foo" {
-  image          = %q
+  image          = cosign_sign.foo.signed_ref
   predicate_type = "https://predicate.type"
   predicate      = jsonencode({
     foo = "bar"
@@ -55,7 +55,7 @@ resource "cosign_attest" "foo" {
 }
 
 resource "cosign_copy" "copy" {
-  source      = cosign_sign.foo.signed_ref
+  source      = cosign_sign.foo.attested_ref
   destination = %q
 }
 
@@ -100,7 +100,7 @@ data "cosign_verify" "copy" {
     }
   })
 }
-`, ref1, ref1, dst),
+`, ref1, dst),
 			Check: resource.ComposeTestCheckFunc(
 				// Check that it got signed!
 				resource.TestCheckResourceAttr(
