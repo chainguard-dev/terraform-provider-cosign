@@ -97,10 +97,11 @@ func doCopy(ctx context.Context, data *CopyResourceModel) (string, error) {
 		return "", errors.New("Unable to parse destination repository")
 	}
 
-	if err := copy.CopyCmd(ctx, ropts, digest.String(), dst.String(), false, false); err != nil {
+	dstDig := dst.Digest(digest.DigestStr()).String()
+	if err := copy.CopyCmd(ctx, ropts, digest.String(), dstDig, false, false); err != nil {
 		return "", fmt.Errorf("Unable to copy image: %w", err)
 	}
-	return dst.Digest(digest.DigestStr()).String(), nil
+	return dstDig, nil
 }
 
 func (r *CopyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
