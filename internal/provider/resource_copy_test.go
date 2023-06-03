@@ -3,7 +3,6 @@ package provider
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"testing"
 
 	ocitesting "github.com/chainguard-dev/terraform-provider-oci/testing"
@@ -82,8 +81,9 @@ data "cosign_verify" "copy" {
 `, ref1, dst),
 			Check: resource.ComposeTestCheckFunc(
 				// Check that it got signed!
-				resource.TestMatchResourceAttr(
-					"data.cosign_verify.copy", "verified_ref", regexp.MustCompile("^"+ref1.String())),
+				resource.TestCheckResourceAttr(
+					"data.cosign_verify.copy", "verified_ref", dst.Digest(dig1.String()).String(),
+				),
 			),
 		}},
 	})
