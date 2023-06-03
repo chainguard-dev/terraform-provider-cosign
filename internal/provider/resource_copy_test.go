@@ -46,9 +46,17 @@ resource "cosign_sign" "foo" {
   image = %q
 }
 
+resource "cosign_attest" "foo" {
+  image          = %q
+  predicate_type = "https://predicate.type"
+  predicate      = jsonencode({
+    foo = "bar"
+  })
+}
+
 resource "cosign_copy" "copy" {
-  source           = cosign_sign.foo.signed_ref
-  destination_repo = %q
+  source      = cosign_sign.foo.signed_ref
+  destination = %q
 }
 
 data "cosign_verify" "copy" {
@@ -57,7 +65,7 @@ data "cosign_verify" "copy" {
     apiVersion = "policy.sigstore.dev/v1beta1"
     kind       = "ClusterImagePolicy"
     metadata = {
-      name = "signed-it"
+      name = "attested-and-signed-it"
     }
     spec = {
       images = [{
@@ -71,6 +79,20 @@ data "cosign_verify" "copy" {
             subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
           }]
         }
+        attestations = [{
+          name = "must-have-attestation"
+          predicateType = "https://predicate.type"
+          policy = {
+            type = "cue"
+            // When we do things in this style, we can use file("foo.cue") too!
+            data = <<EOF
+              predicateType: "https://predicate.type"
+              predicate: {
+                foo: "bar"
+              }
+            EOF
+          }
+        }]
         ctlog = {
           url = "https://rekor.sigstore.dev"
         }
@@ -78,7 +100,7 @@ data "cosign_verify" "copy" {
     }
   })
 }
-`, ref1, dst),
+`, ref1, ref1, dst),
 			Check: resource.ComposeTestCheckFunc(
 				// Check that it got signed!
 				resource.TestCheckResourceAttr(

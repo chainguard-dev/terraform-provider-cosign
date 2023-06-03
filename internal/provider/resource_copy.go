@@ -32,9 +32,9 @@ type CopyResource struct {
 }
 
 type CopyResourceModel struct {
-	Id              types.String `tfsdk:"id"`
-	Source          types.String `tfsdk:"source"`
-	DestinationRepo types.String `tfsdk:"destination_repo"`
+	Id          types.String `tfsdk:"id"`
+	Source      types.String `tfsdk:"source"`
+	Destination types.String `tfsdk:"destination"`
 
 	CopiedRef types.String `tfsdk:"copied_ref"`
 }
@@ -63,7 +63,7 @@ func (r *CopyResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"destination_repo": schema.StringAttribute{
+			"destination": schema.StringAttribute{
 				MarkdownDescription: "The destination repository.",
 				Optional:            false,
 				Required:            true,
@@ -92,7 +92,7 @@ func doCopy(ctx context.Context, data *CopyResourceModel) (string, error) {
 	ropts := options.RegistryOptions{
 		KubernetesKeychain: true,
 	}
-	dst, err := name.NewRepository(data.DestinationRepo.ValueString())
+	dst, err := name.NewRepository(data.Destination.ValueString())
 	if err != nil {
 		return "", errors.New("Unable to parse destination repository")
 	}
