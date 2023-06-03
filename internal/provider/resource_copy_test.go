@@ -55,7 +55,7 @@ resource "cosign_attest" "foo" {
 }
 
 resource "cosign_copy" "copy" {
-  source      = cosign_sign.foo.attested_ref
+  source      = cosign_attest.foo.attested_ref
   destination = %q
 }
 
