@@ -17,7 +17,7 @@ This copies the provided image digest cosign copy.
 
 ### Required
 
-- `destination_repo` (String) The destination repository.
+- `destination` (String) The destination repository.
 - `source` (String) The digest of the container image to copy.
 
 ### Read-Only
