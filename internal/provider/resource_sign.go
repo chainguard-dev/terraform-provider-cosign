@@ -31,6 +31,7 @@ func NewSignResource() resource.Resource {
 }
 
 type SignResource struct {
+	popts ProviderOpts
 }
 
 type SignResourceModel struct {
@@ -87,10 +88,21 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 	}
 }
 
-func (r *SignResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+func (r *SignResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	// Prevent panic if the provider has not been configured.
+	if req.ProviderData == nil {
+		return
+	}
+
+	popts, ok := req.ProviderData.(*ProviderOpts)
+	if !ok || popts == nil {
+		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		return
+	}
+	r.popts = *popts
 }
 
-func doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
+func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("Unable to parse image digest")
@@ -120,7 +132,7 @@ func doSign(ctx context.Context, data *SignResourceModel) (string, error, error)
 		Upload:     true,
 		TlogUpload: true,
 		Registry: options.RegistryOptions{
-			KubernetesKeychain: true,
+			RegistryClientOpts: r.popts.ropts,
 		},
 	}
 
@@ -137,7 +149,7 @@ func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	digest, warning, err := doSign(ctx, data)
+	digest, warning, err := r.doSign(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("error while signing", err.Error())
 		return
@@ -179,7 +191,7 @@ func (r *SignResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	digest, warning, err := doSign(ctx, data)
+	digest, warning, err := r.doSign(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("error while signing", err.Error())
 		return

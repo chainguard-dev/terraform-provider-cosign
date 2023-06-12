@@ -34,6 +34,8 @@ func NewAttestResource() resource.Resource {
 type AttestResource struct {
 	FulcioURL types.String
 	RekorURL  types.String
+
+	popts ProviderOpts
 }
 
 type AttestResourceModel struct {
@@ -110,10 +112,21 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 	}
 }
 
-func (r *AttestResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+func (r *AttestResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	// Prevent panic if the provider has not been configured.
+	if req.ProviderData == nil {
+		return
+	}
+
+	popts, ok := req.ProviderData.(*ProviderOpts)
+	if !ok || popts == nil {
+		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		return
+	}
+	r.popts = *popts
 }
 
-func doAttest(ctx context.Context, data *AttestResourceModel, config AttestResource) (string, error, error) {
+func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("Unable to parse image digest")
@@ -143,7 +156,7 @@ func doAttest(ctx context.Context, data *AttestResourceModel, config AttestResou
 			SkipConfirmation: true,
 		},
 		RegistryOptions: options.RegistryOptions{
-			KubernetesKeychain: true,
+			RegistryClientOpts: r.popts.ropts,
 		},
 		PredicatePath: file.Name(),
 		PredicateType: data.PredicateType.ValueString(),
@@ -164,12 +177,7 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	config := AttestResource{
-		FulcioURL: r.FulcioURL,
-		RekorURL:  r.RekorURL,
-	}
-
-	digest, warning, err := doAttest(ctx, data, config)
+	digest, warning, err := r.doAttest(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
@@ -211,12 +219,7 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	config := AttestResource{
-		FulcioURL: r.FulcioURL,
-		RekorURL:  r.RekorURL,
-	}
-
-	digest, warning, err := doAttest(ctx, data, config)
+	digest, warning, err := r.doAttest(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
