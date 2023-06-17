@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"regexp"
@@ -51,6 +53,18 @@ func TestAccResourceCosignAttest(t *testing.T) {
 	url := "https://example.com/" + uuid.New().String()
 
 	value := uuid.New().String()
+
+	tmp, err := os.CreateTemp("", "cosign-attest-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := fmt.Sprintf(`{"foo": %q}`, value)
+	if _, err := tmp.WriteString(contents); err != nil {
+		t.Fatal(err)
+	}
+	tmp.Close()
+	rawHash := sha256.Sum256([]byte(contents))
+	hash := hex.EncodeToString(rawHash[:])
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -123,15 +137,16 @@ data "cosign_verify" "bar" {
 				),
 			},
 
-			// Update the resource to attest the second image, and verify it.
+			// Update the resource to attest the second image (this time via a file!), and verify it.
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_attest" "foo" {
   image          = %q
   predicate_type = %q
-  predicate      = jsonencode({
-    foo = %q
-  })
+  predicate_file {
+    path   = %q
+    sha256 = %q
+  }
 }
 
 data "cosign_verify" "bar" {
@@ -178,7 +193,7 @@ data "cosign_verify" "bar" {
     }
   })
 }
-`, ref2, url, value, ref2, url, url, value),
+`, ref2, url, tmp.Name(), hash, ref2, url, url, value),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestMatchResourceAttr(
 						"cosign_attest.foo", "image", regexp.MustCompile("^"+ref2.String())),

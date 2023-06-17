@@ -2,12 +2,16 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -16,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/attest"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
@@ -43,9 +48,11 @@ type AttestResourceModel struct {
 	Image         types.String `tfsdk:"image"`
 	PredicateType types.String `tfsdk:"predicate_type"`
 	Predicate     types.String `tfsdk:"predicate"`
-	AttestedRef   types.String `tfsdk:"attested_ref"`
-	FulcioURL     types.String `tfsdk:"fulcio_url"`
-	RekorURL      types.String `tfsdk:"rekor_url"`
+	PredicateFile types.List   `tfsdk:"predicate_file"`
+
+	AttestedRef types.String `tfsdk:"attested_ref"`
+	FulcioURL   types.String `tfsdk:"fulcio_url"`
+	RekorURL    types.String `tfsdk:"rekor_url"`
 }
 
 func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -53,6 +60,11 @@ func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequ
 }
 
 func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	singlePredicate := stringvalidator.ExactlyOneOf(
+		path.MatchRoot("predicate"),
+		path.MatchRoot("predicate_file").AtListIndex(0).AtName("sha256"),
+	)
+
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "This attests the provided image digest with cosign.",
 		Attributes: map[string]schema.Attribute{
@@ -83,9 +95,12 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			},
 			"predicate": schema.StringAttribute{
 				MarkdownDescription: "The JSON body of the in-toto predicate's claim.",
-				Optional:            false,
-				Required:            true,
-				Validators:          []validator.String{validators.JSONValidator{}},
+				Optional:            true,
+				Required:            false,
+				Validators: []validator.String{
+					validators.JSONValidator{},
+					singlePredicate,
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -109,6 +124,36 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			"predicate_file": schema.ListNestedBlock{
+				MarkdownDescription: "The path and sha256 hex of the predicate to attest.",
+				Validators:          []validator.List{listvalidator.SizeBetween(1, 1)},
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"sha256": schema.StringAttribute{
+							MarkdownDescription: "The sha256 hex hash of the predicate body.",
+							Optional:            true,
+							Required:            false,
+							Validators: []validator.String{
+								singlePredicate,
+								stringvalidator.AlsoRequires(path.MatchRoot("predicate_file").AtListIndex(0).AtName("path")),
+							},
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.RequiresReplace(),
+							},
+						},
+						"path": schema.StringAttribute{
+							MarkdownDescription: "The path to a file containing the predicate to attest.",
+							Optional:            true,
+							Required:            false,
+							Validators: []validator.String{
+								stringvalidator.AlsoRequires(path.MatchRoot("predicate_file").AtListIndex(0).AtName("sha256")),
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -129,24 +174,47 @@ func (r *AttestResource) Configure(ctx context.Context, req resource.ConfigureRe
 func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
-		return "", nil, errors.New("Unable to parse image digest")
+		return "", nil, errors.New("unable to parse image digest")
 	}
 
 	if !providers.Enabled(ctx) {
-		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting."), nil
+		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}
 
 	// Write the attestation to a temporary file.
-	file, err := os.CreateTemp("", "")
-	if err != nil {
-		return "", nil, err
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.WriteString(data.Predicate.ValueString()); err != nil {
-		return "", nil, err
-	}
-	if err := file.Close(); err != nil {
-		return "", nil, err
+	var path string
+	switch {
+	// Write the predicate to a file to pass to attest.
+	case data.Predicate.ValueString() != "":
+		file, err := os.CreateTemp("", "")
+		if err != nil {
+			return "", nil, err
+		}
+		defer os.Remove(file.Name())
+		if _, err := file.WriteString(data.Predicate.ValueString()); err != nil {
+			return "", nil, err
+		}
+		if err := file.Close(); err != nil {
+			return "", nil, err
+		}
+		path = file.Name()
+
+	case len(data.PredicateFile.Elements()) > 0:
+		attrs := data.PredicateFile.Elements()[0].(basetypes.ObjectValue).Attributes()
+		path = attrs["path"].(basetypes.StringValue).ValueString()
+		expectedHash := attrs["sha256"].(basetypes.StringValue).ValueString()
+
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return "", nil, err
+		}
+		rawHash := sha256.Sum256(contents)
+		if got, want := hex.EncodeToString(rawHash[:]), expectedHash; got != want {
+			return "", nil, fmt.Errorf("sha256(%q) = %s, expected %s", path, got, want)
+		}
+
+	default:
+		return "", nil, errors.New("one of predicate or predicate_file must be specified")
 	}
 
 	ac := attest.AttestCommand{
@@ -158,14 +226,14 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 		RegistryOptions: options.RegistryOptions{
 			RegistryClientOpts: r.popts.ropts,
 		},
-		PredicatePath: file.Name(),
+		PredicatePath: path,
 		PredicateType: data.PredicateType.ValueString(),
 		Replace:       true,
 		Timeout:       options.DefaultTimeout,
 		TlogUpload:    true,
 	}
 	if err := ac.Exec(ctx, digest.String()); err != nil {
-		return "", nil, fmt.Errorf("Unable to sign image: %w", err)
+		return "", nil, fmt.Errorf("unable to sign image: %w", err)
 	}
 	return digest.String(), nil, nil
 }
