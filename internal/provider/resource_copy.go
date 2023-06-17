@@ -29,6 +29,7 @@ func NewCopyResource() resource.Resource {
 }
 
 type CopyResource struct {
+	popts ProviderOpts
 }
 
 type CopyResourceModel struct {
@@ -80,17 +81,28 @@ func (r *CopyResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 	}
 }
 
-func (r *CopyResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+func (r *CopyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	// Prevent panic if the provider has not been configured.
+	if req.ProviderData == nil {
+		return
+	}
+
+	popts, ok := req.ProviderData.(*ProviderOpts)
+	if !ok || popts == nil {
+		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		return
+	}
+	r.popts = *popts
 }
 
-func doCopy(ctx context.Context, data *CopyResourceModel) (string, error) {
+func (r *CopyResource) doCopy(ctx context.Context, data *CopyResourceModel) (string, error) {
 	digest, err := name.NewDigest(data.Source.ValueString())
 	if err != nil {
 		return "", errors.New("Unable to parse image digest")
 	}
 
 	ropts := options.RegistryOptions{
-		KubernetesKeychain: true,
+		RegistryClientOpts: r.popts.ropts,
 	}
 	dst, err := name.NewRepository(data.Destination.ValueString())
 	if err != nil {
@@ -111,7 +123,7 @@ func (r *CopyResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	digest, err := doCopy(ctx, data)
+	digest, err := r.doCopy(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("error while Copying", err.Error())
 		return
@@ -151,7 +163,7 @@ func (r *CopyResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	digest, err := doCopy(ctx, data)
+	digest, err := r.doCopy(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("error while Copying", err.Error())
 		return

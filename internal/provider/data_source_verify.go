@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -23,6 +22,7 @@ func NewVerifyDataSource() datasource.DataSource {
 
 // ExampleDataSource defines the data source implementation.
 type VerifyDataSource struct {
+	popts ProviderOpts
 }
 
 // ExampleDataSourceModel describes the data source data model.
@@ -63,7 +63,18 @@ func (d *VerifyDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 	}
 }
 
-func (d *VerifyDataSource) Configure(context.Context, datasource.ConfigureRequest, *datasource.ConfigureResponse) {
+func (d *VerifyDataSource) Configure(ctx context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	// Prevent panic if the provider has not been configured.
+	if req.ProviderData == nil {
+		return
+	}
+
+	popts, ok := req.ProviderData.(*ProviderOpts)
+	if !ok || popts == nil {
+		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		return
+	}
+	d.popts = *popts
 }
 
 func (d *VerifyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -78,7 +89,8 @@ func (d *VerifyDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		resp.Diagnostics.AddError("Invalid image reference", err.Error())
 		return
 	}
-	digest, err := ociremote.ResolveDigest(ref) // TODO: with creds?
+	opts := ociremote.WithRemoteOptions(d.popts.withContext(ctx)...)
+	digest, err := ociremote.ResolveDigest(ref, opts)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to resolve digest", err.Error())
 		return
@@ -92,7 +104,7 @@ func (d *VerifyDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	}
 	resp.Diagnostics.Append(wc.diags...)
 
-	if err := vfy.Verify(ctx, digest, authn.DefaultKeychain); err != nil {
+	if err := vfy.Verify(ctx, digest, d.popts.keychain, opts); err != nil {
 		resp.Diagnostics.AddError("Verification failed", err.Error())
 		return
 	}
