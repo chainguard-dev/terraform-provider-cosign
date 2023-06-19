@@ -18,17 +18,26 @@ This attests the provided image digest with cosign.
 ### Required
 
 - `image` (String) The digest of the container image to attest.
-- `predicate` (String) The JSON body of the in-toto predicate's claim.
 - `predicate_type` (String) The in-toto predicate type of the claim being attested.
 
 ### Optional
 
 - `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev).
+- `predicate` (String) The JSON body of the in-toto predicate's claim.
+- `predicate_file` (Block List) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicate_file))
 - `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev).
 
 ### Read-Only
 
 - `attested_ref` (String) This always matches the input digest, but is a convenience for composition.
 - `id` (String) The immutable digest this resource attests.
+
+<a id="nestedblock--predicate_file"></a>
+### Nested Schema for `predicate_file`
+
+Optional:
+
+- `path` (String) The path to a file containing the predicate to attest.
+- `sha256` (String) The sha256 hex hash of the predicate body.
 
 
