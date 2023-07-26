@@ -2,7 +2,10 @@ package provider
 
 import (
 	"context"
+	"net/url"
+	"sync"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/fulcio"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -10,6 +13,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/sigstore/fulcio/pkg/api"
+	rclient "github.com/sigstore/rekor/pkg/client"
+	"github.com/sigstore/rekor/pkg/generated/client"
 )
 
 // Ensure Provider satisfies various provider interfaces.
@@ -26,6 +32,55 @@ type ProviderModel struct {
 type ProviderOpts struct {
 	ropts    []remote.Option
 	keychain authn.Keychain
+
+	oidc fulcio.OIDCProvider
+
+	sync.Mutex
+
+	// Keyed off fulcio URL.
+	signers map[string]*fulcio.SignerVerifier
+
+	// Keyed off rekor URL.
+	rekorClients map[string]*client.Rekor
+}
+
+func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
+	p.Lock()
+	defer p.Unlock()
+
+	if rekorClient, ok := p.rekorClients[rekorUrl]; ok {
+		return rekorClient, nil
+	}
+
+	rekorClient, err := rclient.GetRekorClient(rekorUrl, rclient.WithUserAgent("terraform-provider-cosign"))
+	if err != nil {
+		return nil, err
+	}
+
+	p.rekorClients[rekorUrl] = rekorClient
+	return rekorClient, nil
+}
+
+func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier, error) {
+	p.Lock()
+	defer p.Unlock()
+
+	if sv, ok := p.signers[fulcioUrl]; ok {
+		return sv, nil
+	}
+
+	furl, err := url.Parse(fulcioUrl)
+	if err != nil {
+		return nil, err
+	}
+	fulcioClient := api.NewClient(furl, api.WithUserAgent("terraform-provider-cosign"))
+	sv, err := fulcio.NewSigner(p.oidc, fulcioClient)
+	if err != nil {
+		return nil, err
+	}
+
+	p.signers[fulcioUrl] = sv
+	return sv, nil
 }
 
 func (p *ProviderOpts) withContext(ctx context.Context) []remote.Option {
@@ -69,8 +124,11 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	ropts = append(ropts, remote.Reuse(puller), remote.Reuse(pusher))
 
 	opts := &ProviderOpts{
-		ropts:    ropts,
-		keychain: kc,
+		ropts:        ropts,
+		keychain:     kc,
+		oidc:         &oidcProvider{},
+		signers:      map[string]*fulcio.SignerVerifier{},
+		rekorClients: map[string]*client.Rekor{},
 	}
 
 	// Make provider opts available to resources and data sources.

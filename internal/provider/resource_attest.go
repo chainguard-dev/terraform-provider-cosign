@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -22,9 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/sigstore/cosign/v2/cmd/cosign/cli/attest"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
-	"github.com/sigstore/cosign/v2/pkg/providers"
 )
 
 var (
@@ -40,7 +39,7 @@ type AttestResource struct {
 	FulcioURL types.String
 	RekorURL  types.String
 
-	popts ProviderOpts
+	popts *ProviderOpts
 }
 
 type AttestResourceModel struct {
@@ -168,7 +167,7 @@ func (r *AttestResource) Configure(ctx context.Context, req resource.ConfigureRe
 		resp.Diagnostics.AddError("Client Error", "invalid provider data")
 		return
 	}
-	r.popts = *popts
+	r.popts = popts
 }
 
 func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel) (string, error, error) {
@@ -177,7 +176,7 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 		return "", nil, errors.New("unable to parse image digest")
 	}
 
-	if !providers.Enabled(ctx) {
+	if !r.popts.oidc.Enabled(ctx) {
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}
 
@@ -217,24 +216,33 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 		return "", nil, errors.New("one of predicate or predicate_file must be specified")
 	}
 
-	ac := attest.AttestCommand{
-		KeyOpts: options.KeyOpts{
-			FulcioURL:        data.FulcioURL.ValueString(),
-			RekorURL:         data.RekorURL.ValueString(),
-			SkipConfirmation: true,
-		},
-		RegistryOptions: options.RegistryOptions{
-			RegistryClientOpts: r.popts.ropts,
-		},
-		PredicatePath: path,
-		PredicateType: data.PredicateType.ValueString(),
-		Replace:       true,
-		Timeout:       options.DefaultTimeout,
-		TlogUpload:    true,
+	predicate, err := os.Open(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("open %q: %w", path, err)
 	}
-	if err := ac.Exec(ctx, digest.String()); err != nil {
+
+	stmt, err := secant.NewStatement(digest, predicate, data.PredicateType.ValueString())
+	if err != nil {
+		return "", nil, fmt.Errorf("creating attestation statement: %w", err)
+	}
+
+	sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
+	if err != nil {
+		return "", nil, fmt.Errorf("creating signer: %w", err)
+	}
+
+	rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
+	if err != nil {
+		return "", nil, fmt.Errorf("creating rekor client: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
+	defer cancel()
+
+	if err := secant.Attest(ctx, stmt, sv, rekorClient, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("unable to sign image: %w", err)
 	}
+
 	return digest.String(), nil, nil
 }
 

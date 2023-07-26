@@ -29,7 +29,7 @@ func NewCopyResource() resource.Resource {
 }
 
 type CopyResource struct {
-	popts ProviderOpts
+	popts *ProviderOpts
 }
 
 type CopyResourceModel struct {
@@ -92,7 +92,7 @@ func (r *CopyResource) Configure(_ context.Context, req resource.ConfigureReques
 		resp.Diagnostics.AddError("Client Error", "invalid provider data")
 		return
 	}
-	r.popts = *popts
+	r.popts = popts
 }
 
 func (r *CopyResource) doCopy(ctx context.Context, data *CopyResourceModel) (string, error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -17,8 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
-	"github.com/sigstore/cosign/v2/cmd/cosign/cli/sign"
-	"github.com/sigstore/cosign/v2/pkg/providers"
 )
 
 var (
@@ -31,7 +30,7 @@ func NewSignResource() resource.Resource {
 }
 
 type SignResource struct {
-	popts ProviderOpts
+	popts *ProviderOpts
 }
 
 type SignResourceModel struct {
@@ -99,7 +98,7 @@ func (r *SignResource) Configure(ctx context.Context, req resource.ConfigureRequ
 		resp.Diagnostics.AddError("Client Error", "invalid provider data")
 		return
 	}
-	r.popts = *popts
+	r.popts = popts
 }
 
 func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
@@ -108,35 +107,27 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		return "", nil, errors.New("Unable to parse image digest")
 	}
 
-	if !providers.Enabled(ctx) {
+	if !r.popts.oidc.Enabled(ctx) {
 		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing."), nil
 	}
 
-	ropts := &options.RootOptions{
-		Timeout: options.DefaultTimeout,
-	}
-	kopts := options.KeyOpts{
-		FulcioURL:        data.FulcioURL.ValueString(),
-		RekorURL:         data.RekorURL.ValueString(),
-		SkipConfirmation: true,
-	}
-	sopts := options.SignOptions{
-		SkipConfirmation: true,
-		Fulcio: options.FulcioOptions{
-			URL: data.FulcioURL.ValueString(),
-		},
-		Rekor: options.RekorOptions{
-			URL: data.RekorURL.ValueString(),
-		},
-		Recursive:  true,
-		Upload:     true,
-		TlogUpload: true,
-		Registry: options.RegistryOptions{
-			RegistryClientOpts: r.popts.ropts,
-		},
+	sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
+	if err != nil {
+		return "", nil, fmt.Errorf("creating signer: %w", err)
 	}
 
-	if err := sign.SignCmd(ropts, kopts, sopts, []string{digest.String()}); err != nil {
+	rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
+	if err != nil {
+		return "", nil, fmt.Errorf("creating rekor client: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
+	defer cancel()
+
+	// TODO: This should probably be configurable?
+	annotations := map[string]interface{}{}
+
+	if err := secant.Sign(ctx, annotations, sv, rekorClient, []string{digest.String()}, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("Unable to sign image: %w", err)
 	}
 	return digest.String(), nil, nil
