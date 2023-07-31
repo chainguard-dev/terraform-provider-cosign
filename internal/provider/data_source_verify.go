@@ -22,7 +22,7 @@ func NewVerifyDataSource() datasource.DataSource {
 
 // ExampleDataSource defines the data source implementation.
 type VerifyDataSource struct {
-	popts ProviderOpts
+	popts *ProviderOpts
 }
 
 // ExampleDataSourceModel describes the data source data model.
@@ -74,7 +74,7 @@ func (d *VerifyDataSource) Configure(ctx context.Context, req datasource.Configu
 		resp.Diagnostics.AddError("Client Error", "invalid provider data")
 		return
 	}
-	d.popts = *popts
+	d.popts = popts
 }
 
 func (d *VerifyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
