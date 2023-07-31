@@ -236,6 +236,9 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 		return "", nil, fmt.Errorf("creating rekor client: %w", err)
 	}
 
+	// Avoid hitting rekor rate limits.
+	r.popts.limiter.Take()
+
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
