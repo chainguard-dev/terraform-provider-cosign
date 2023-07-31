@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/url"
 	"sync"
-	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/fulcio"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -135,7 +134,8 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		signers:      map[string]*fulcio.SignerVerifier{},
 		rekorClients: map[string]*client.Rekor{},
 		// A little bird told me that rekor allows 500 requests per minute.
-		limiter: ratelimit.New(500, ratelimit.Per(time.Minute), ratelimit.WithoutSlack),
+		// We want to stay well under that, so we'll round down to 5 QPS.
+		limiter: ratelimit.New(5, ratelimit.WithoutSlack),
 	}
 
 	// Make provider opts available to resources and data sources.
