@@ -26,6 +26,7 @@ require (
 	github.com/sigstore/rekor v1.2.2
 	github.com/sigstore/sigstore v1.7.1
 	github.com/transparency-dev/merkle v0.0.2
+	go.uber.org/ratelimit v0.3.0
 	golang.org/x/oauth2 v0.10.0
 )
 
@@ -92,6 +93,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.19.2 // indirect
 	github.com/aws/smithy-go v1.13.5 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.0.0-20221027043306-dc425bc05c64 // indirect
+	github.com/benbjohnson/clock v1.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bgentry/speakeasy v0.1.0 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect

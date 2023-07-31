@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/fulcio"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -16,6 +17,7 @@ import (
 	"github.com/sigstore/fulcio/pkg/api"
 	rclient "github.com/sigstore/rekor/pkg/client"
 	"github.com/sigstore/rekor/pkg/generated/client"
+	"go.uber.org/ratelimit"
 )
 
 // Ensure Provider satisfies various provider interfaces.
@@ -42,6 +44,9 @@ type ProviderOpts struct {
 
 	// Keyed off rekor URL.
 	rekorClients map[string]*client.Rekor
+
+	// Client-side rate limiting to avoid rekor 429s.
+	limiter ratelimit.Limiter
 }
 
 func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
@@ -129,6 +134,8 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		oidc:         &oidcProvider{},
 		signers:      map[string]*fulcio.SignerVerifier{},
 		rekorClients: map[string]*client.Rekor{},
+		// A little bird told me that rekor allows 500 requests per minute.
+		limiter: ratelimit.New(500, ratelimit.Per(time.Minute), ratelimit.WithoutSlack),
 	}
 
 	// Make provider opts available to resources and data sources.
