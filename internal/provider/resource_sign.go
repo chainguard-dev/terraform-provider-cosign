@@ -128,7 +128,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	defer cancel()
 
 	// TODO: This should probably be configurable?
-	annotations := map[string]interface{}{}
+	var annotations map[string]interface{} = nil
 
 	if err := secant.Sign(ctx, annotations, sv, rekorClient, []string{digest.String()}, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("Unable to sign image: %w", err)
