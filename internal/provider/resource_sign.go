@@ -121,9 +121,6 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		return "", nil, fmt.Errorf("creating rekor client: %w", err)
 	}
 
-	// Avoid hitting rekor rate limits.
-	r.popts.limiter.Take()
-
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 

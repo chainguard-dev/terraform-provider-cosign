@@ -8,11 +8,14 @@ replace github.com/theupdateframework/go-tuf => github.com/theupdateframework/go
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.0.4
 	github.com/cyberphone/json-canonicalization v0.0.0-20230710064741-aa7fe85c7dbd
+	github.com/go-openapi/runtime v0.26.0
 	github.com/go-openapi/strfmt v0.21.7
 	github.com/go-openapi/swag v0.22.4
 	github.com/google/certificate-transparency-go v1.1.6
 	github.com/google/go-containerregistry v0.15.3-0.20230607134719-145eebe7465d
 	github.com/google/uuid v1.3.0
+	github.com/hashicorp/go-cleanhttp v0.5.2
+	github.com/hashicorp/go-retryablehttp v0.7.4
 	github.com/hashicorp/terraform-plugin-docs v0.14.1
 	github.com/hashicorp/terraform-plugin-framework v1.3.3
 	github.com/hashicorp/terraform-plugin-framework-validators v0.10.0
@@ -133,7 +136,6 @@ require (
 	github.com/go-openapi/jsonpointer v0.20.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/loads v0.21.2 // indirect
-	github.com/go-openapi/runtime v0.26.0 // indirect
 	github.com/go-openapi/spec v0.20.9 // indirect
 	github.com/go-openapi/validate v0.22.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -158,12 +160,10 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-checkpoint v0.5.0 // indirect
-	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-cty v1.4.1-0.20200414143053-d3edf31b6320 // indirect
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-plugin v1.4.10 // indirect
-	github.com/hashicorp/go-retryablehttp v0.7.4 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.7 // indirect
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
