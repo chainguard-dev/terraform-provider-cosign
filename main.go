@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/provider"
+	"github.com/google/go-containerregistry/pkg/logs"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 
@@ -22,6 +24,13 @@ func main() {
 	opts := providerserver.ServeOpts{
 		Address: "registry.terraform.io/chainguard-dev/cosign",
 		Debug:   debug,
+	}
+
+	// Wire up ggcr logs.
+	logs.Warn.SetOutput(os.Stderr)
+	if debug {
+		logs.Progress.SetOutput(os.Stderr)
+		logs.Debug.SetOutput(os.Stderr)
 	}
 
 	if err := providerserver.Serve(context.Background(), provider.New(version), opts); err != nil {

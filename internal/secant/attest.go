@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/url"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/models/intoto"
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/tlog"
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/google/go-containerregistry/pkg/logs"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -113,8 +113,8 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 		return fmt.Errorf("creating intoto entry: %w", err)
 	}
 
-	log.Printf("debug envelope:\n%s", string(envelope))
-	log.Printf("debug rawCert:\n%s", string(rawCert))
+	logs.Debug.Printf("debug envelope:\n%s", envelope)
+	logs.Debug.Printf("debug rawCert:\n%s", rawCert)
 
 	entry, err := tlog.Upload(ctx, rekorClient, e)
 	if err != nil {
