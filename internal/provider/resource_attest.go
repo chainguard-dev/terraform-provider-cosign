@@ -176,6 +176,9 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 		return "", nil, errors.New("unable to parse image digest")
 	}
 
+	if os.Getenv("TF_COSIGN_DISABLE") != "" {
+		return digest.String(), errors.New("TF_COSIGN_DISABLE is set, skipping attesting"), nil
+	}
 	if !r.popts.oidc.Enabled(ctx) {
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}

@@ -23,7 +23,6 @@ See provider examples:
 - [ECS](./provider-examples/ecs/README.md)
 
 
-
 This provider also exposes `cosign_sign` and `cosign_attest` resources that will
 sign and attest a provided OCI digest, which is intended to compose with
 OCI providers such as [`ko`](https://github.com/ko-build/terraform-provider-ko),
@@ -56,3 +55,9 @@ resource "cosign_attest" "example" {
 # Reference cosign_attest.example.attested_ref to ensure we wait for all of the
 # metadata to be published.
 ```
+
+## Disabling
+
+The provider will skip signing/attesting when ambient credentials are not
+present, but can also be explicitly disabled by setting `TF_COSIGN_DISABLE` to
+any value.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
@@ -107,8 +108,11 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		return "", nil, errors.New("Unable to parse image digest")
 	}
 
+	if os.Getenv("TF_COSIGN_DISABLE") != "" {
+		return digest.String(), errors.New("TF_COSIGN_DISABLE is set, skipping signing"), nil
+	}
 	if !r.popts.oidc.Enabled(ctx) {
-		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing."), nil
+		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing"), nil
 	}
 
 	sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
