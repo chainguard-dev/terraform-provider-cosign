@@ -9,10 +9,12 @@ import (
 	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant"
+	stypes "github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -42,12 +44,22 @@ type AttestResource struct {
 	popts *ProviderOpts
 }
 
+type PredicateObject struct {
+	PredicateType types.String `tfsdk:"type"`
+	Predicate     types.String `tfsdk:"json"`
+	PredicateFile types.List   `tfsdk:"file"`
+}
+
 type AttestResourceModel struct {
-	Id            types.String `tfsdk:"id"`
-	Image         types.String `tfsdk:"image"`
+	Id    types.String `tfsdk:"id"`
+	Image types.String `tfsdk:"image"`
+
+	// PredicateObject, left for backward compat.
 	PredicateType types.String `tfsdk:"predicate_type"`
 	Predicate     types.String `tfsdk:"predicate"`
 	PredicateFile types.List   `tfsdk:"predicate_file"`
+
+	Predicates types.List `tfsdk:"predicates"`
 
 	AttestedRef types.String `tfsdk:"attested_ref"`
 	FulcioURL   types.String `tfsdk:"fulcio_url"`
@@ -59,11 +71,6 @@ func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequ
 }
 
 func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
-	singlePredicate := stringvalidator.ExactlyOneOf(
-		path.MatchRoot("predicate"),
-		path.MatchRoot("predicate_file").AtListIndex(0).AtName("sha256"),
-	)
-
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "This attests the provided image digest with cosign.",
 		Attributes: map[string]schema.Attribute{
@@ -85,8 +92,9 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			},
 			"predicate_type": schema.StringAttribute{
 				MarkdownDescription: "The in-toto predicate type of the claim being attested.",
-				Optional:            false,
-				Required:            true,
+				Optional:            true,
+				Required:            false,
+				DeprecationMessage:  "Use predicates instead.",
 				Validators:          []validator.String{validators.URLValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -96,9 +104,9 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The JSON body of the in-toto predicate's claim.",
 				Optional:            true,
 				Required:            false,
+				DeprecationMessage:  "Use predicates instead.",
 				Validators: []validator.String{
 					validators.JSONValidator{},
-					singlePredicate,
 				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -127,6 +135,7 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"predicate_file": schema.ListNestedBlock{
 				MarkdownDescription: "The path and sha256 hex of the predicate to attest.",
 				Validators:          []validator.List{listvalidator.SizeBetween(1, 1)},
+				DeprecationMessage:  "Use predicates instead.",
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"sha256": schema.StringAttribute{
@@ -134,7 +143,6 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 							Optional:            true,
 							Required:            false,
 							Validators: []validator.String{
-								singlePredicate,
 								stringvalidator.AlsoRequires(path.MatchRoot("predicate_file").AtListIndex(0).AtName("path")),
 							},
 							PlanModifiers: []planmodifier.String{
@@ -147,6 +155,71 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 							Required:            false,
 							Validators: []validator.String{
 								stringvalidator.AlsoRequires(path.MatchRoot("predicate_file").AtListIndex(0).AtName("sha256")),
+							},
+						},
+					},
+				},
+			},
+			"predicates": schema.ListNestedBlock{
+				MarkdownDescription: "The path and sha256 hex of the predicate to attest.",
+				Validators:          []validator.List{listvalidator.SizeAtLeast(1)},
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"type": schema.StringAttribute{
+							MarkdownDescription: "The in-toto predicate type of the claim being attested.",
+							Optional:            false,
+							Required:            true,
+							Validators:          []validator.String{validators.URLValidator{}},
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.RequiresReplace(),
+							},
+						},
+						"json": schema.StringAttribute{
+							MarkdownDescription: "The JSON body of the in-toto predicate's claim.",
+							Optional:            true,
+							Required:            false,
+							Validators: []validator.String{
+								validators.JSONValidator{},
+								stringvalidator.ExactlyOneOf(
+									path.MatchRelative(),
+									path.MatchRelative().AtParent().AtName("file").AtListIndex(0).AtName("sha256"),
+								),
+							},
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.RequiresReplace(),
+							},
+						},
+					},
+					Blocks: map[string]schema.Block{
+						"file": schema.ListNestedBlock{
+							MarkdownDescription: "The path and sha256 hex of the predicate to attest.",
+							Validators:          []validator.List{listvalidator.SizeBetween(1, 1)},
+							NestedObject: schema.NestedBlockObject{
+								Attributes: map[string]schema.Attribute{
+									"sha256": schema.StringAttribute{
+										MarkdownDescription: "The sha256 hex hash of the predicate body.",
+										Optional:            true,
+										Required:            false,
+										Validators: []validator.String{
+											stringvalidator.ExactlyOneOf(
+												path.MatchRelative(),
+												path.MatchRelative().AtParent().AtParent().AtParent().AtName("json"),
+											),
+											stringvalidator.AlsoRequires(path.MatchRelative().AtParent().AtName("path")),
+										},
+										PlanModifiers: []planmodifier.String{
+											stringplanmodifier.RequiresReplace(),
+										},
+									},
+									"path": schema.StringAttribute{
+										MarkdownDescription: "The path to a file containing the predicate to attest.",
+										Optional:            true,
+										Required:            false,
+										Validators: []validator.String{
+											stringvalidator.AlsoRequires(path.MatchRelative().AtParent().AtName("sha256")),
+										},
+									},
+								},
 							},
 						},
 					},
@@ -170,8 +243,31 @@ func (r *AttestResource) Configure(ctx context.Context, req resource.ConfigureRe
 	r.popts = popts
 }
 
-func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel) (string, error, error) {
-	digest, err := name.NewDigest(data.Image.ValueString())
+func toPredObjects(ctx context.Context, arm *AttestResourceModel) ([]PredicateObject, diag.Diagnostics) {
+	preds := []PredicateObject{}
+	diags := arm.Predicates.ElementsAs(ctx, &preds, false)
+	if obj := toPredObject(arm); obj != nil {
+		preds = append(preds, *obj)
+	}
+
+	return preds, diags
+}
+
+// TODO: Remove this when we deprecate top-level predicate.
+func toPredObject(data *AttestResourceModel) *PredicateObject {
+	if data.Predicate.ValueString() != "" || len(data.PredicateFile.Elements()) > 0 {
+		return &PredicateObject{
+			PredicateType: data.PredicateType,
+			PredicateFile: data.PredicateFile,
+			Predicate:     data.Predicate,
+		}
+	}
+
+	return nil
+}
+
+func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel, preds []PredicateObject) (string, error, error) {
+	digest, err := name.NewDigest(arm.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("unable to parse image digest")
 	}
@@ -183,58 +279,64 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}
 
-	// Write the attestation to a temporary file.
-	var path string
-	switch {
-	// Write the predicate to a file to pass to attest.
-	case data.Predicate.ValueString() != "":
-		file, err := os.CreateTemp("", "")
+	statements := []*stypes.Statement{}
+
+	for _, data := range preds {
+		// Write the attestation to a temporary file.
+		var path string
+		switch {
+		// Write the predicate to a file to pass to attest.
+		case data.Predicate.ValueString() != "":
+			file, err := os.CreateTemp("", "")
+			if err != nil {
+				return "", nil, err
+			}
+			defer os.Remove(file.Name())
+			if _, err := file.WriteString(data.Predicate.ValueString()); err != nil {
+				return "", nil, err
+			}
+			if err := file.Close(); err != nil {
+				return "", nil, err
+			}
+			path = file.Name()
+
+		case len(data.PredicateFile.Elements()) > 0:
+			attrs := data.PredicateFile.Elements()[0].(basetypes.ObjectValue).Attributes()
+			path = attrs["path"].(basetypes.StringValue).ValueString()
+			expectedHash := attrs["sha256"].(basetypes.StringValue).ValueString()
+
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				return "", nil, err
+			}
+			rawHash := sha256.Sum256(contents)
+			if got, want := hex.EncodeToString(rawHash[:]), expectedHash; got != want {
+				return "", nil, fmt.Errorf("sha256(%q) = %s, expected %s", path, got, want)
+			}
+
+		default:
+			return "", nil, errors.New("one of predicate or predicate_file must be specified")
+		}
+
+		predicate, err := os.Open(path)
 		if err != nil {
-			return "", nil, err
+			return "", nil, fmt.Errorf("open %q: %w", path, err)
 		}
-		defer os.Remove(file.Name())
-		if _, err := file.WriteString(data.Predicate.ValueString()); err != nil {
-			return "", nil, err
-		}
-		if err := file.Close(); err != nil {
-			return "", nil, err
-		}
-		path = file.Name()
 
-	case len(data.PredicateFile.Elements()) > 0:
-		attrs := data.PredicateFile.Elements()[0].(basetypes.ObjectValue).Attributes()
-		path = attrs["path"].(basetypes.StringValue).ValueString()
-		expectedHash := attrs["sha256"].(basetypes.StringValue).ValueString()
-
-		contents, err := os.ReadFile(path)
+		stmt, err := secant.NewStatement(digest, predicate, data.PredicateType.ValueString())
 		if err != nil {
-			return "", nil, err
-		}
-		rawHash := sha256.Sum256(contents)
-		if got, want := hex.EncodeToString(rawHash[:]), expectedHash; got != want {
-			return "", nil, fmt.Errorf("sha256(%q) = %s, expected %s", path, got, want)
+			return "", nil, fmt.Errorf("creating attestation statement: %w", err)
 		}
 
-	default:
-		return "", nil, errors.New("one of predicate or predicate_file must be specified")
+		statements = append(statements, stmt)
 	}
 
-	predicate, err := os.Open(path)
-	if err != nil {
-		return "", nil, fmt.Errorf("open %q: %w", path, err)
-	}
-
-	stmt, err := secant.NewStatement(digest, predicate, data.PredicateType.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating attestation statement: %w", err)
-	}
-
-	sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
+	sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
 	if err != nil {
 		return "", nil, fmt.Errorf("creating signer: %w", err)
 	}
 
-	rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
+	rekorClient, err := r.popts.rekorClient(arm.RekorURL.ValueString())
 	if err != nil {
 		return "", nil, fmt.Errorf("creating rekor client: %w", err)
 	}
@@ -242,7 +344,7 @@ func (r *AttestResource) doAttest(ctx context.Context, data *AttestResourceModel
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if err := secant.Attest(ctx, stmt, sv, rekorClient, r.popts.ropts); err != nil {
+	if err := secant.Attest(ctx, statements, sv, rekorClient, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("unable to sign image: %w", err)
 	}
 
@@ -256,7 +358,13 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	digest, warning, err := r.doAttest(ctx, data)
+	preds, diags := toPredObjects(ctx, data)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
@@ -298,7 +406,13 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	digest, warning, err := r.doAttest(ctx, data)
+	preds, diags := toPredObjects(ctx, data)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return

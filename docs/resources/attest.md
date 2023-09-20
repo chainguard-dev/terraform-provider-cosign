@@ -18,13 +18,14 @@ This attests the provided image digest with cosign.
 ### Required
 
 - `image` (String) The digest of the container image to attest.
-- `predicate_type` (String) The in-toto predicate type of the claim being attested.
 
 ### Optional
 
 - `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev).
-- `predicate` (String) The JSON body of the in-toto predicate's claim.
-- `predicate_file` (Block List) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicate_file))
+- `predicate` (String, Deprecated) The JSON body of the in-toto predicate's claim.
+- `predicate_file` (Block List, Deprecated) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicate_file))
+- `predicate_type` (String, Deprecated) The in-toto predicate type of the claim being attested.
+- `predicates` (Block List) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicates))
 - `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev).
 
 ### Read-Only
@@ -34,6 +35,27 @@ This attests the provided image digest with cosign.
 
 <a id="nestedblock--predicate_file"></a>
 ### Nested Schema for `predicate_file`
+
+Optional:
+
+- `path` (String) The path to a file containing the predicate to attest.
+- `sha256` (String) The sha256 hex hash of the predicate body.
+
+
+<a id="nestedblock--predicates"></a>
+### Nested Schema for `predicates`
+
+Required:
+
+- `type` (String) The in-toto predicate type of the claim being attested.
+
+Optional:
+
+- `file` (Block List) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicates--file))
+- `json` (String) The JSON body of the in-toto predicate's claim.
+
+<a id="nestedblock--predicates--file"></a>
+### Nested Schema for `predicates.file`
 
 Optional:
 
