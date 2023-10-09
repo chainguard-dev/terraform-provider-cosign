@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+
+	"strings"
 	"testing"
 
 	ocitesting "github.com/chainguard-dev/terraform-provider-oci/testing"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
@@ -206,59 +209,16 @@ data "cosign_verify" "bar" {
 			},
 		},
 	})
-}
 
-func TestAccResourceCosignAttests(t *testing.T) {
-	if _, ok := os.LookupEnv("ACTIONS_ID_TOKEN_REQUEST_URL"); !ok {
-		t.Skip("Unable to keylessly attest without an actions token")
-	}
-
-	repo, cleanup := ocitesting.SetupRepository(t, "test")
-	defer cleanup()
-
-	// Push two images by digest.
-	img1, err := random.Image(1024, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dig1, err := img1.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref1 := repo.Digest(dig1.String())
-	if err := remote.Write(ref1, img1); err != nil {
-		t.Fatal(err)
+	attRef := ref1.Tag(strings.ReplaceAll(dig1.String(), ":", "-") + ".att")
+	if got, want := countAttestations(t, attRef), 1; got != want {
+		t.Errorf("got %d attestation layers, want %d", got, want)
 	}
 
-	img2, err := random.Image(1024, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dig2, err := img2.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref2 := repo.Digest(dig2.String())
-	if err := remote.Write(ref2, img2); err != nil {
-		t.Fatal(err)
-	}
-
-	url := "https://example.com/" + uuid.New().String()
+  // Now we also attest using the multiple predicates form.
+  // One of the predicates is the same predicateType as above, so it will get replaced.
+  // The second predicate has a new predicateType, so we should see one attestation get added.
 	url2 := "https://example.com/" + uuid.New().String()
-
-	value := uuid.New().String()
-
-	tmp, err := os.CreateTemp("", "cosign-attest-*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents := fmt.Sprintf(`{"foo": %q}`, value)
-	if _, err := tmp.WriteString(contents); err != nil {
-		t.Fatal(err)
-	}
-	tmp.Close()
-	rawHash := sha256.Sum256([]byte(contents))
-	hash := hex.EncodeToString(rawHash[:])
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -358,4 +318,24 @@ data "cosign_verify" "bar" {
 			},
 		},
 	})
+
+	if got, want := countAttestations(t, attRef), 2; got != want {
+		t.Errorf("got %d attestation layers, want %d", got, want)
+	}
+}
+
+func countAttestations(t *testing.T, attRef name.Reference) int {
+	t.Helper()
+
+	att, err := remote.Image(attRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers, err := att.Layers()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return len(layers)
 }
