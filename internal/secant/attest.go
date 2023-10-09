@@ -3,6 +3,7 @@ package secant
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
+	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/sigstore/sigstore/pkg/signature/options"
 )
 
@@ -65,6 +67,10 @@ func Attest(ctx context.Context, statements []*types.Statement, sv types.Cosigne
 	// We don't actually need to access the remote entity to attach things to it
 	// so we use a placeholder here.
 	se := ociremote.SignedUnknown(digest)
+
+	// We use a dupe detector that always verifies because we always want to replace
+	// things with a matching predicate type.
+	dd := cremote.NewDupeDetector(&alwaysVerifier{})
 
 	for _, statement := range statements {
 		// Make sure these statements are all for the same subject.
@@ -151,7 +157,7 @@ func Attest(ctx context.Context, statements []*types.Statement, sv types.Cosigne
 		}
 
 		signOpts := []mutate.SignOption{
-			mutate.WithDupeDetector(cremote.NewDupeDetector(sv)),
+			mutate.WithDupeDetector(dd),
 			mutate.WithReplaceOp(cremote.NewReplaceOp(predicateType)),
 		}
 
@@ -186,4 +192,16 @@ func parsePredicateType(t string) (string, error) {
 		uri = t
 	}
 	return uri, nil
+}
+
+type alwaysVerifier struct{}
+
+// This only exists to satisfy cosign interface jungle.
+func (av *alwaysVerifier) PublicKey(opts ...signature.PublicKeyOption) (crypto.PublicKey, error) {
+	panic("this should not get called ever")
+}
+
+// This always verifies.
+func (av *alwaysVerifier) VerifySignature(signature, message io.Reader, opts ...signature.VerifyOption) error {
+	return nil
 }
