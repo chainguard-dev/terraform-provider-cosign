@@ -66,7 +66,8 @@ func Attest(ctx context.Context, statements []*types.Statement, sv types.Cosigne
 
 	// We don't actually need to access the remote entity to attach things to it
 	// so we use a placeholder here.
-	se := ociremote.SignedUnknown(digest)
+	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+	se := ociremote.SignedUnknown(digest, ropts...)
 
 	// We use a dupe detector that always verifies because we always want to replace
 	// things with a matching predicate type.
@@ -169,7 +170,6 @@ func Attest(ctx context.Context, statements []*types.Statement, sv types.Cosigne
 	}
 
 	// Publish the attestations associated with this entity
-	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	return ociremote.WriteAttestations(digest.Repository, se, ropts...)
 }
 
