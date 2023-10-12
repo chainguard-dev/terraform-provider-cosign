@@ -3,7 +3,6 @@ package secant
 import (
 	"bytes"
 	"context"
-	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,14 +18,12 @@ import (
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"github.com/sigstore/cosign/v2/pkg/cosign/attestation"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
-	cremote "github.com/sigstore/cosign/v2/pkg/cosign/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
-	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/sigstore/sigstore/pkg/signature/options"
 )
 
@@ -68,10 +65,6 @@ func Attest(ctx context.Context, statements []*types.Statement, sv types.Cosigne
 	// so we use a placeholder here.
 	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	se := ociremote.SignedUnknown(digest, ropts...)
-
-	// We use a dupe detector that always verifies because we always want to replace
-	// things with a matching predicate type.
-	dd := cremote.NewDupeDetector(&alwaysVerifier{})
 
 	for _, statement := range statements {
 		// Make sure these statements are all for the same subject.
@@ -158,8 +151,7 @@ func Attest(ctx context.Context, statements []*types.Statement, sv types.Cosigne
 		}
 
 		signOpts := []mutate.SignOption{
-			mutate.WithDupeDetector(dd),
-			mutate.WithReplaceOp(cremote.NewReplaceOp(predicateType)),
+			mutate.WithReplaceOp(newReplaceOp(predicateType)),
 		}
 
 		// Attach the attestation to the entity.
@@ -192,16 +184,4 @@ func parsePredicateType(t string) (string, error) {
 		uri = t
 	}
 	return uri, nil
-}
-
-type alwaysVerifier struct{}
-
-// This only exists to satisfy cosign interface jungle.
-func (av *alwaysVerifier) PublicKey(opts ...signature.PublicKeyOption) (crypto.PublicKey, error) {
-	panic("this should not get called ever")
-}
-
-// This always verifies.
-func (av *alwaysVerifier) VerifySignature(signature, message io.Reader, opts ...signature.VerifyOption) error {
-	return nil
 }
