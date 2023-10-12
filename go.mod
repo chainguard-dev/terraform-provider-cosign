@@ -27,7 +27,7 @@ require (
 	github.com/hashicorp/terraform-plugin-testing v1.4.0
 	github.com/secure-systems-lab/go-securesystemslib v0.7.0
 	github.com/sigstore/cosign/v2 v2.2.1-0.20231011172831-faa47c78201c
-	github.com/sigstore/fulcio v1.4.2
+	github.com/sigstore/fulcio v1.4.3
 	github.com/sigstore/policy-controller v0.8.2
 	github.com/sigstore/rekor v1.2.2
 	github.com/sigstore/sigstore v1.7.3
@@ -286,7 +286,7 @@ require (
 	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
 	golang.org/x/mod v0.12.0 // indirect
-	golang.org/x/net v0.16.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sync v0.4.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/term v0.13.0 // indirect
