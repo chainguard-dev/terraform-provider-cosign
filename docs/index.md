@@ -3,12 +3,19 @@
 page_title: "cosign Provider"
 subcategory: ""
 description: |-
-  
 ---
 
 # cosign Provider
 
+## Environment Variables
 
+| Name                    | Default                          | Description                                                                                    |
+| ----------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| TF_COSIGN_LOCAL         |                                  | Enables interative signing with Cosign locally (browser based flow only).                      |
+| TF_COSIGN_CONNECTOR_ID  |                                  | Configures Sigstore Connector ID for local based signing.                                      |
+| TF_COSIGN_ISSUER        | https://oauth2.sigstore.dev/auth | Configures Sigstore token issuer.                                                              |
+| TF_COSIGN_CLIENT_SECRET |                                  | Configures Sigstore OAuth Client Secret.                                                       |
+| TF_COSIGN_REDIRECT_URL  |                                  | Configures Sigstore interactive OAuth redirect URL. If empty, a random localhost port is used. |
 
 ## Example Usage
 
