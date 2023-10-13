@@ -51,8 +51,9 @@ type PredicateObject struct {
 }
 
 type AttestResourceModel struct {
-	Id    types.String `tfsdk:"id"`
-	Image types.String `tfsdk:"image"`
+	Id       types.String `tfsdk:"id"`
+	Image    types.String `tfsdk:"image"`
+	Conflict types.String `tfsdk:"conflict"`
 
 	// PredicateObject, left for backward compat.
 	PredicateType types.String `tfsdk:"predicate_type"`
@@ -86,6 +87,17 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional:            false,
 				Required:            true,
 				Validators:          []validator.String{validators.DigestValidator{}},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"conflict": schema.StringAttribute{
+				MarkdownDescription: "How to handle conflicting predicate values",
+				Computed:            true,
+				Optional:            true,
+				Required:            false,
+				Default:             stringdefault.StaticString("APPEND"),
+				Validators:          []validator.String{ConflictValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -344,8 +356,8 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if err := secant.Attest(ctx, statements, sv, rekorClient, r.popts.ropts); err != nil {
-		return "", nil, fmt.Errorf("unable to sign image: %w", err)
+	if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.ropts); err != nil {
+		return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 	}
 
 	return digest.String(), nil, nil
@@ -439,4 +451,28 @@ func (r *AttestResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *AttestResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// ConflictValidator is a string validator that checks that the string is valid OCI reference by digest.
+type ConflictValidator struct{}
+
+var _ validator.String = ConflictValidator{}
+
+func (v ConflictValidator) Description(context.Context) string {
+	return "value must be one of (`APPEND`, `REPLACE`, `SKIPSAME`)"
+}
+func (v ConflictValidator) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
+
+func (v ConflictValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+
+	switch val {
+	case "APPEND", "REPLACE", "SKIPSAME":
+		return
+	default:
+		resp.Diagnostics.AddError("error validating conflict", v.Description(ctx))
+	}
 }
