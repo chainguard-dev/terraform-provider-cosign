@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	ocitesting "github.com/chainguard-dev/terraform-provider-oci/testing"
-	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
@@ -211,24 +211,57 @@ data "cosign_verify" "bar" {
 	})
 
 	attRef := ref1.Tag(strings.ReplaceAll(dig1.String(), ":", "-") + ".att")
-	if got, want := countAttestations(t, attRef), 1; got != want {
+
+	att, err := remote.Image(attRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := countAttestations(t, att), 1; got != want {
 		t.Errorf("got %d attestation layers, want %d", got, want)
 	}
 
-  // Now we also attest using the multiple predicates form.
-  // One of the predicates is the same predicateType as above, so it will get replaced.
-  // The second predicate has a new predicateType, so we should see one attestation get added.
 	url2 := "https://example.com/" + uuid.New().String()
 
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			// Attest and verify the first image.
-			{
-				Config: fmt.Sprintf(`
+	prevDigest, err := att.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		conflict  string
+		wantCount int
+		noop      bool
+	}{{
+		conflict:  "APPEND",
+		wantCount: 3,
+	}, {
+		conflict:  "REPLACE",
+		wantCount: 2,
+	}, {
+		conflict:  "SKIPSAME",
+		wantCount: 2,
+		noop:      true,
+	}} {
+		t.Run(tc.conflict, func(t *testing.T) {
+			// Now we also attest using the multiple predicates form.
+			// One of the predicates is the same predicateType as above.
+			// The second predicate has a new predicateType.
+			//
+			// Depending on the conflict type, we expect to see different behavior:
+			// - APPEND will just append the 2 predicates, resulting in 3 total.
+			// - REPLACE will replace by predicate and elminate the duplicates, dropping it down to 2.
+			// - SKIPSAME will see that the statements are the same as what we added in REPLACE, and we will remain at 2.
+			resource.Test(t, resource.TestCase{
+				PreCheck:                 func() { testAccPreCheck(t) },
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				Steps: []resource.TestStep{
+					// Attest and verify the first image.
+					{
+						Config: fmt.Sprintf(`
 resource "cosign_attest" "foo" {
   image          = %q
+  conflict       = %q
   predicates {
     type = %q
     json = jsonencode({
@@ -305,32 +338,51 @@ data "cosign_verify" "bar" {
     }
   })
 }
-`, ref1, url, value, url2, tmp.Name(), hash, ref1, url, url, value, url2, url2, value),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestMatchResourceAttr(
-						"cosign_attest.foo", "image", regexp.MustCompile("^"+ref1.String())),
-					resource.TestMatchResourceAttr(
-						"cosign_attest.foo", "attested_ref", regexp.MustCompile("^"+ref1.String())),
-					// Check that it got attested!
-					resource.TestMatchResourceAttr(
-						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
-				),
-			},
-		},
-	})
+`, ref1, tc.conflict, url, value, url2, tmp.Name(), hash, ref1, url, url, value, url2, url2, value),
+						Check: resource.ComposeTestCheckFunc(
+							resource.TestMatchResourceAttr(
+								"cosign_attest.foo", "image", regexp.MustCompile("^"+ref1.String())),
+							resource.TestMatchResourceAttr(
+								"cosign_attest.foo", "attested_ref", regexp.MustCompile("^"+ref1.String())),
+							// Check that it got attested!
+							resource.TestMatchResourceAttr(
+								"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
+						),
+					},
+				},
+			})
 
-	if got, want := countAttestations(t, attRef), 2; got != want {
-		t.Errorf("got %d attestation layers, want %d", got, want)
+			att, err := remote.Image(attRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := countAttestations(t, att), tc.wantCount; got != want {
+				t.Errorf("got %d attestation layers, want %d", got, want)
+			}
+
+			nextDigest, err := att.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.noop {
+				if prevDigest != nextDigest {
+					t.Errorf("expected noop, but attestation was updated")
+				}
+			} else {
+				if prevDigest == nextDigest {
+					t.Errorf("expected attestation to change, but saw noop")
+				}
+			}
+
+			prevDigest = nextDigest
+		})
 	}
 }
 
-func countAttestations(t *testing.T, attRef name.Reference) int {
+func countAttestations(t *testing.T, att v1.Image) int {
 	t.Helper()
-
-	att, err := remote.Image(attRef)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	layers, err := att.Layers()
 	if err != nil {

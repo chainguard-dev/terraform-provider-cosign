@@ -34,12 +34,16 @@ type SignResource struct {
 	popts *ProviderOpts
 }
 
+// TODO: Add Conflict
 type SignResourceModel struct {
 	Id        types.String `tfsdk:"id"`
 	Image     types.String `tfsdk:"image"`
 	SignedRef types.String `tfsdk:"signed_ref"`
 	FulcioURL types.String `tfsdk:"fulcio_url"`
 	RekorURL  types.String `tfsdk:"rekor_url"`
+
+	// TODO: Support REPLACE and SKIPSAME conflict behavior like attest.
+	// Conflict types.String `tfsdk:"conflict"`
 }
 
 func (r *SignResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -132,7 +136,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	var annotations map[string]interface{} = nil
 
 	if err := secant.Sign(ctx, annotations, sv, rekorClient, []string{digest.String()}, r.popts.ropts); err != nil {
-		return "", nil, fmt.Errorf("Unable to sign image: %w", err)
+		return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
 	}
 	return digest.String(), nil, nil
 }
