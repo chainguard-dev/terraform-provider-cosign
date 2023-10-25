@@ -3,8 +3,10 @@ package provider
 import (
 	"context"
 
-	_ "github.com/chainguard-dev/terraform-provider-cosign/internal/provider/interactive"
 	"github.com/sigstore/cosign/v2/pkg/providers"
+
+	_ "github.com/chainguard-dev/terraform-provider-cosign/internal/provider/interactive"
+	_ "github.com/sigstore/cosign/v2/pkg/providers/filesystem"
 	_ "github.com/sigstore/cosign/v2/pkg/providers/github"
 )
 
