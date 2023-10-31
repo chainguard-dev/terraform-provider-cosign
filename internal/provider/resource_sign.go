@@ -34,16 +34,13 @@ type SignResource struct {
 	popts *ProviderOpts
 }
 
-// TODO: Add Conflict
 type SignResourceModel struct {
 	Id        types.String `tfsdk:"id"`
 	Image     types.String `tfsdk:"image"`
+	Conflict  types.String `tfsdk:"conflict"`
 	SignedRef types.String `tfsdk:"signed_ref"`
 	FulcioURL types.String `tfsdk:"fulcio_url"`
 	RekorURL  types.String `tfsdk:"rekor_url"`
-
-	// TODO: Support REPLACE and SKIPSAME conflict behavior like attest.
-	// Conflict types.String `tfsdk:"conflict"`
 }
 
 func (r *SignResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -66,6 +63,17 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            false,
 				Required:            true,
 				Validators:          []validator.String{validators.DigestValidator{}},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"conflict": schema.StringAttribute{
+				MarkdownDescription: "How to handle conflicting signature values",
+				Computed:            true,
+				Optional:            true,
+				Required:            false,
+				Default:             stringdefault.StaticString("APPEND"),
+				Validators:          []validator.String{ConflictValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -135,7 +143,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	// TODO: This should probably be configurable?
 	var annotations map[string]interface{} = nil
 
-	if err := secant.Sign(ctx, annotations, sv, rekorClient, []string{digest.String()}, r.popts.ropts); err != nil {
+	if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []string{digest.String()}, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
 	}
 	return digest.String(), nil, nil

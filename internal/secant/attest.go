@@ -173,7 +173,7 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 
 		signOpts := []mutate.SignOption{}
 		if conflict != "APPEND" {
-			signOpts = append(signOpts, mutate.WithReplaceOp(newReplaceOp(predicateType)))
+			signOpts = append(signOpts, mutate.WithReplaceOp(replacePredicate(predicateType)))
 		}
 
 		// Attach the attestation to the entity.

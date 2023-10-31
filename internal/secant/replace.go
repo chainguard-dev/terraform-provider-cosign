@@ -9,7 +9,7 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/oci"
 )
 
-func newReplaceOp(predicateType string) *ro {
+func replacePredicate(predicateType string) *ro {
 	return &ro{predicateType: predicateType}
 }
 
@@ -29,7 +29,7 @@ func (r *ro) Replace(signatures oci.Signatures, o oci.Signature) (oci.Signatures
 	sigsCopy = append(sigsCopy, o)
 
 	if len(sigs) == 0 {
-		ros.attestations = append(ros.attestations, sigsCopy...)
+		ros.sigs = append(ros.sigs, sigsCopy...)
 		return ros, nil
 	}
 
@@ -48,7 +48,7 @@ func (r *ro) Replace(signatures oci.Signatures, o oci.Signature) (oci.Signatures
 		sigsCopy = append(sigsCopy, s)
 	}
 
-	ros.attestations = append(ros.attestations, sigsCopy...)
+	ros.sigs = append(ros.sigs, sigsCopy...)
 
 	return ros, nil
 }
@@ -102,9 +102,9 @@ func getPredicateType(s sigsubset) (string, error) {
 
 type replaceOCISignatures struct {
 	oci.Signatures
-	attestations []oci.Signature
+	sigs []oci.Signature
 }
 
 func (r *replaceOCISignatures) Get() ([]oci.Signature, error) {
-	return r.attestations, nil
+	return r.sigs, nil
 }
