@@ -29,7 +29,7 @@ require (
 	github.com/sigstore/cosign/v2 v2.2.1-0.20231029012554-9400476ad0c1
 	github.com/sigstore/fulcio v1.4.3
 	github.com/sigstore/policy-controller v0.8.2
-	github.com/sigstore/rekor v1.2.2
+	github.com/sigstore/rekor v1.3.2
 	github.com/sigstore/sigstore v1.7.5
 	github.com/transparency-dev/merkle v0.0.2
 	go.uber.org/ratelimit v0.3.0
@@ -143,7 +143,7 @@ require (
 	github.com/go-openapi/validate v0.22.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.15.1 // indirect
+	github.com/go-playground/validator/v10 v10.15.5 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
@@ -285,7 +285,7 @@ require (
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/mod v0.12.0 // indirect
+	golang.org/x/mod v0.13.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sync v0.4.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
