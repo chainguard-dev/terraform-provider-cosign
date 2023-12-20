@@ -22,9 +22,9 @@ require (
 	github.com/hashicorp/terraform-plugin-docs v0.14.1
 	github.com/hashicorp/terraform-plugin-framework v1.3.5
 	github.com/hashicorp/terraform-plugin-framework-validators v0.12.0
-	github.com/hashicorp/terraform-plugin-go v0.18.0
+	github.com/hashicorp/terraform-plugin-go v0.19.1
 	github.com/hashicorp/terraform-plugin-log v0.9.0
-	github.com/hashicorp/terraform-plugin-testing v1.4.0
+	github.com/hashicorp/terraform-plugin-testing v1.6.0
 	github.com/secure-systems-lab/go-securesystemslib v0.7.0
 	github.com/sigstore/cosign/v2 v2.2.1-0.20231029012554-9400476ad0c1
 	github.com/sigstore/fulcio v1.4.3
@@ -64,7 +64,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.2.1 // indirect
 	github.com/Masterminds/sprig/v3 v3.2.3 // indirect
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
-	github.com/ProtonMail/go-crypto v0.0.0-20230518184743-7afd39499903 // indirect
+	github.com/ProtonMail/go-crypto v0.0.0-20230828082145-3c4c8a2d2371 // indirect
 	github.com/ThalesIgnite/crypto11 v1.2.5 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect
 	github.com/agnivade/levenshtein v1.1.1 // indirect
@@ -79,7 +79,7 @@ require (
 	github.com/alibabacloud-go/tea-utils v1.4.5 // indirect
 	github.com/alibabacloud-go/tea-xml v1.1.2 // indirect
 	github.com/aliyun/credentials-go v1.2.4 // indirect
-	github.com/apparentlymart/go-textseg/v13 v13.0.0 // indirect
+	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aws/aws-sdk-go v1.48.7 // indirect
@@ -164,7 +164,7 @@ require (
 	github.com/hashicorp/go-cty v1.4.1-0.20200414143053-d3edf31b6320 // indirect
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
-	github.com/hashicorp/go-plugin v1.4.10 // indirect
+	github.com/hashicorp/go-plugin v1.5.2 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.7 // indirect
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
@@ -172,14 +172,14 @@ require (
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/go-version v1.6.0 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
-	github.com/hashicorp/hc-install v0.5.2 // indirect
+	github.com/hashicorp/hc-install v0.6.1 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-5 // indirect
-	github.com/hashicorp/hcl/v2 v2.17.0 // indirect
+	github.com/hashicorp/hcl/v2 v2.19.1 // indirect
 	github.com/hashicorp/logutils v1.0.0 // indirect
-	github.com/hashicorp/terraform-exec v0.18.1 // indirect
-	github.com/hashicorp/terraform-json v0.17.1 // indirect
-	github.com/hashicorp/terraform-plugin-sdk/v2 v2.27.0 // indirect
-	github.com/hashicorp/terraform-registry-address v0.2.1 // indirect
+	github.com/hashicorp/terraform-exec v0.19.0 // indirect
+	github.com/hashicorp/terraform-json v0.18.0 // indirect
+	github.com/hashicorp/terraform-plugin-sdk/v2 v2.30.0 // indirect
+	github.com/hashicorp/terraform-registry-address v0.2.3 // indirect
 	github.com/hashicorp/terraform-svchost v0.1.1 // indirect
 	github.com/hashicorp/vault/api v1.10.0 // indirect
 	github.com/hashicorp/yamux v0.1.1 // indirect
@@ -189,7 +189,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jedisct1/go-minisign v0.0.0-20230513092556-d96eb068239a // indirect
 	github.com/jellydator/ttlcache/v3 v3.1.0 // indirect
-	github.com/jhump/protoreflect v1.13.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -262,13 +261,13 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/vbatts/tar-split v0.11.5 // indirect
 	github.com/vmihailenco/msgpack v4.0.4+incompatible // indirect
-	github.com/vmihailenco/msgpack/v5 v5.3.5 // indirect
+	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xanzy/go-gitlab v0.93.2 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/yashtewari/glob-intersection v0.2.0 // indirect
-	github.com/zclconf/go-cty v1.13.2 // indirect
+	github.com/zclconf/go-cty v1.14.1 // indirect
 	go.mongodb.org/mongo-driver v1.12.1 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/otel v1.19.0 // indirect
