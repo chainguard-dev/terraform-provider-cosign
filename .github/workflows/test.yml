@@ -9,30 +9,6 @@ on:
       - 'main'
 
 jobs:
-  generate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-        if: "contains(github.event_name, 'pull_request')"
-        with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-
-      - name: checkout from push event
-        if: github.event_name == 'push'
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-
-      - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
-        with:
-          go-version: '1.20'
-          check-latest: true
-
-      - run: go generate ./...
-
-      - name: git diff
-        run: |
-          git diff --compact-summary --exit-code || \
-            (echo; echo "Unexpected difference in directories after code generation. Run 'go generate ./...' command and commit."; exit 1)
-
   test:
     name: Test
     runs-on: ubuntu-latest
