@@ -61,7 +61,7 @@ func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
 	return rekorClient, nil
 }
 
-func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier, error) {
+func (p *ProviderOpts) signerVerifier(fulcioUrl string, provider fulcio.OIDCProvider) (*fulcio.SignerVerifier, error) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -74,7 +74,7 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier,
 		return nil, err
 	}
 	fulcioClient := api.NewClient(furl, api.WithUserAgent("terraform-provider-cosign"))
-	sv, err := fulcio.NewSigner(p.oidc, fulcioClient)
+	sv, err := fulcio.NewSigner(provider, fulcioClient)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +147,7 @@ func (p *Provider) Resources(ctx context.Context) []func() resource.Resource {
 func (p *Provider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewVerifyDataSource,
+		NewAvailableDataSource,
 	}
 }
 

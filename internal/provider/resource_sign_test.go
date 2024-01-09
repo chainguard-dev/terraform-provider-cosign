@@ -70,12 +70,13 @@ func TestAccResourceCosignSign(t *testing.T) {
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_sign" "foo" {
-  image = %q
+  oidc_provider = "github-actions"
+  image         = %q
 }
 
 data "cosign_verify" "bar" {
-  image  = cosign_sign.foo.signed_ref
-  policy = jsonencode({
+  image    = cosign_sign.foo.signed_ref
+  policy   = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
     kind       = "ClusterImagePolicy"
     metadata = {
@@ -116,12 +117,13 @@ data "cosign_verify" "bar" {
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_sign" "foo" {
-  image = %q
+  oidc_provider = "github-actions"
+  image         = %q
 }
 
 data "cosign_verify" "bar" {
-  image  = cosign_sign.foo.signed_ref
-  policy = jsonencode({
+  image    = cosign_sign.foo.signed_ref
+  policy   = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
     kind       = "ClusterImagePolicy"
     metadata = {
@@ -214,19 +216,20 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config: fmt.Sprintf(`
-		resource "cosign_sign" "foo" {
-  		image = %q
+	resource "cosign_sign" "foo" {
+		oidc_provider = "github-actions"
+  		image         = %q
 
   		conflict = %q
-		}
+	}
 
-		data "cosign_verify" "bar" {
-  		image  = cosign_sign.foo.signed_ref
-  		policy = jsonencode({
+	data "cosign_verify" "bar" {
+  		image    = cosign_sign.foo.signed_ref
+  		policy   = jsonencode({
     		apiVersion = "policy.sigstore.dev/v1beta1"
     		kind       = "ClusterImagePolicy"
     		metadata = {
-      		name = "signed-it"
+				name = "signed-it"
     		}
     		spec = {
       		images = [{

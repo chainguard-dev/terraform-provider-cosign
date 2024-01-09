@@ -77,6 +77,7 @@ func TestAccResourceCosignAttest(t *testing.T) {
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_attest" "foo" {
+  oidc_provider  = "github-actions"
   image          = %q
   predicate_type = %q
   predicate      = jsonencode({
@@ -85,8 +86,8 @@ resource "cosign_attest" "foo" {
 }
 
 data "cosign_verify" "bar" {
-  image  = cosign_attest.foo.attested_ref
-  policy = jsonencode({
+  image    = cosign_attest.foo.attested_ref
+  policy   = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
     kind       = "ClusterImagePolicy"
     metadata = {
@@ -144,6 +145,7 @@ data "cosign_verify" "bar" {
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_attest" "foo" {
+  oidc_provider       = "github-actions"
   image          = %q
   predicate_type = %q
   predicate_file {
@@ -153,8 +155,8 @@ resource "cosign_attest" "foo" {
 }
 
 data "cosign_verify" "bar" {
-  image  = cosign_attest.foo.attested_ref
-  policy = jsonencode({
+  image    = cosign_attest.foo.attested_ref
+  policy   = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
     kind       = "ClusterImagePolicy"
     metadata = {
@@ -260,6 +262,7 @@ data "cosign_verify" "bar" {
 					{
 						Config: fmt.Sprintf(`
 resource "cosign_attest" "foo" {
+  oidc_provider  = "github-actions"
   image          = %q
   conflict       = %q
   predicates {

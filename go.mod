@@ -2,6 +2,8 @@ module github.com/chainguard-dev/terraform-provider-cosign
 
 go 1.21
 
+toolchain go1.21.5
+
 // https://github.com/theupdateframework/go-tuf/issues/527
 replace github.com/theupdateframework/go-tuf => github.com/theupdateframework/go-tuf v0.5.2
 
@@ -26,6 +28,7 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.4.0
 	github.com/secure-systems-lab/go-securesystemslib v0.7.0
+	github.com/sigstore/cosign v1.13.2
 	github.com/sigstore/cosign/v2 v2.2.1-0.20231029012554-9400476ad0c1
 	github.com/sigstore/fulcio v1.4.3
 	github.com/sigstore/policy-controller v0.8.2
