@@ -884,8 +884,6 @@ github.com/shibumi/go-pathspec v1.3.0/go.mod h1:Xutfslp817l2I1cZvgcfeMQJG5QnU2lh
 github.com/shopspring/decimal v1.2.0/go.mod h1:DKyhrW/HYNuLGql+MJL6WCR6knT2jwCFRcu2hWCYk4o=
 github.com/shopspring/decimal v1.3.1 h1:2Usl1nmF/WZucqkFZhnfFYxxxu8LG21F6nPQBE5gKV8=
 github.com/shopspring/decimal v1.3.1/go.mod h1:DKyhrW/HYNuLGql+MJL6WCR6knT2jwCFRcu2hWCYk4o=
-github.com/sigstore/cosign v1.13.2 h1:McYQ6CDI3wzi2QH+2aePt+08Zz3/yyGAc1iVpNsjntw=
-github.com/sigstore/cosign v1.13.2/go.mod h1:GBzDCUG+Nq7nur2Kyy/4BwWru10nAh7ZmjYZAQoNnKA=
 github.com/sigstore/cosign/v2 v2.2.1-0.20231029012554-9400476ad0c1 h1:cKKEJ2M9RJlQTtIzLbdFEqfMqkgE9bQw5E+2I6LpOyY=
 github.com/sigstore/cosign/v2 v2.2.1-0.20231029012554-9400476ad0c1/go.mod h1:evDWpe9neoOMOQ9wo04OPcXZaA+PqmgIdho23AdUQIY=
 github.com/sigstore/fulcio v1.4.3 h1:9JcUCZjjVhRF9fmhVuz6i1RyhCc/EGCD7MOl+iqCJLQ=
