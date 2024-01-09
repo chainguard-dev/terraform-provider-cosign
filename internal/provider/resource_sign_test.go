@@ -69,13 +69,16 @@ func TestAccResourceCosignSign(t *testing.T) {
 			// Sign and verify the first image.
 			{
 				Config: fmt.Sprintf(`
+data "cosign_available_credentials" "available" {}
+
 resource "cosign_sign" "foo" {
-  oidc_provider = "github-actions"
+  for_each      = data.cosign_available_credentials.available.available
+  oidc_provider = each.key
   image         = %q
 }
 
 data "cosign_verify" "bar" {
-  image    = cosign_sign.foo.signed_ref
+  image    = cosign_sign.foo["github-actions"].signed_ref
   policy   = jsonencode({
     apiVersion = "policy.sigstore.dev/v1beta1"
     kind       = "ClusterImagePolicy"
@@ -104,9 +107,9 @@ data "cosign_verify" "bar" {
 `, ref1, ref1),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestMatchResourceAttr(
-						"cosign_sign.foo", "image", regexp.MustCompile("^"+ref1.String())),
+						"cosign_sign.foo[\"github-actions\"]", "image", regexp.MustCompile("^"+ref1.String())),
 					resource.TestMatchResourceAttr(
-						"cosign_sign.foo", "signed_ref", regexp.MustCompile("^"+ref1.String())),
+						"cosign_sign.foo[\"github-actions\"]", "signed_ref", regexp.MustCompile("^"+ref1.String())),
 					// Check that it got signed!
 					resource.TestMatchResourceAttr(
 						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
@@ -116,8 +119,11 @@ data "cosign_verify" "bar" {
 			// Update the sign resource to sign the second image, and verify that.
 			{
 				Config: fmt.Sprintf(`
+data "cosign_available_credentials" "available" {}
+
 resource "cosign_sign" "foo" {
-  oidc_provider = "github-actions"
+  for_each      = data.cosign_available_credentials.available.available
+  oidc_provider = each.key
   image         = %q
 }
 
@@ -151,9 +157,9 @@ data "cosign_verify" "bar" {
 `, ref2, ref2),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestMatchResourceAttr(
-						"cosign_sign.foo", "image", regexp.MustCompile("^"+ref2.String())),
+						"cosign_sign.foo[\"github-actions\"]", "image", regexp.MustCompile("^"+ref2.String())),
 					resource.TestMatchResourceAttr(
-						"cosign_sign.foo", "signed_ref", regexp.MustCompile("^"+ref2.String())),
+						"cosign_sign.foo[\"github-actions\"]", "signed_ref", regexp.MustCompile("^"+ref2.String())),
 					// Check that it got signed!
 					resource.TestMatchResourceAttr(
 						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref2.String())),
@@ -216,15 +222,18 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config: fmt.Sprintf(`
+	data "cosign_available_credentials" "available" {}
+
 	resource "cosign_sign" "foo" {
-		oidc_provider = "github-actions"
+		for_each      = data.cosign_available_credentials.available.available
+		oidc_provider = each.key
   		image         = %q
 
   		conflict = %q
 	}
 
 	data "cosign_verify" "bar" {
-  		image    = cosign_sign.foo.signed_ref
+  		image    = cosign_sign.foo["github-actions"].signed_ref
   		policy   = jsonencode({
     		apiVersion = "policy.sigstore.dev/v1beta1"
     		kind       = "ClusterImagePolicy"
@@ -253,9 +262,9 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
 		`, ref1, tc.conflict, ref1),
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestMatchResourceAttr(
-								"cosign_sign.foo", "image", regexp.MustCompile("^"+ref1.String())),
+								"cosign_sign.foo[\"github-actions\"]", "image", regexp.MustCompile("^"+ref1.String())),
 							resource.TestMatchResourceAttr(
-								"cosign_sign.foo", "signed_ref", regexp.MustCompile("^"+ref1.String())),
+								"cosign_sign.foo[\"github-actions\"]", "signed_ref", regexp.MustCompile("^"+ref1.String())),
 							// Check that it got signed!
 							resource.TestMatchResourceAttr(
 								"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
