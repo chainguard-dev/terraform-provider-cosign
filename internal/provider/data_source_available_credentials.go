@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 
+	_ "github.com/chainguard-dev/terraform-provider-cosign/internal/provider/interactive"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -14,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/sigstore/cosign/v2/pkg/cosign/env"
 	"github.com/sigstore/cosign/v2/pkg/providers/filesystem"
+	_ "github.com/sigstore/cosign/v2/pkg/providers/github"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
