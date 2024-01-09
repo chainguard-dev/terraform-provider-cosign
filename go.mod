@@ -1,6 +1,6 @@
 module github.com/chainguard-dev/terraform-provider-cosign
 
-go 1.19
+go 1.21
 
 // https://github.com/theupdateframework/go-tuf/issues/527
 replace github.com/theupdateframework/go-tuf => github.com/theupdateframework/go-tuf v0.5.2
