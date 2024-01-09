@@ -101,7 +101,6 @@ func (d *AvailableDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	// TODO: detect multiple different kinds of keyless signing credentials and return each of them.
 	var available []string
 	if interactiveAvailable() {
 		available = append(available, "interactive")

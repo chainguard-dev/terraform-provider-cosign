@@ -33,8 +33,6 @@ type ProviderOpts struct {
 	ropts    []remote.Option
 	keychain authn.Keychain
 
-	oidc fulcio.OIDCProvider
-
 	sync.Mutex
 
 	// Keyed off fulcio URL.
@@ -126,7 +124,6 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	opts := &ProviderOpts{
 		ropts:        ropts,
 		keychain:     kc,
-		oidc:         &oidcProvider{},
 		signers:      map[string]*fulcio.SignerVerifier{},
 		rekorClients: map[string]*client.Rekor{},
 	}
