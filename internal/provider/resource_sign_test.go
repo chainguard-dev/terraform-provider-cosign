@@ -70,7 +70,8 @@ func TestAccResourceCosignSign(t *testing.T) {
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_sign" "foo" {
-  image = %q
+  oidc_provider = "github-actions"
+  image         = %q
 }
 
 data "cosign_verify" "bar" {
@@ -116,7 +117,8 @@ data "cosign_verify" "bar" {
 			{
 				Config: fmt.Sprintf(`
 resource "cosign_sign" "foo" {
-  image = %q
+  oidc_provider = "github-actions"
+  image         = %q
 }
 
 data "cosign_verify" "bar" {
@@ -215,7 +217,8 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
 					{
 						Config: fmt.Sprintf(`
 		resource "cosign_sign" "foo" {
-  		image = %q
+		oidc_provider = "github-actions"
+  		image         = %q
 
   		conflict = %q
 		}
