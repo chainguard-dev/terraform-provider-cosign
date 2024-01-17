@@ -1,11 +1,18 @@
 terraform {
   required_providers {
     cosign = {
-        source = "chainguard-dev/cosign"
+      source = "chainguard-dev/cosign"
     }
   }
+
+  backend "inmem" {}
+
 }
 
+data "cosign_available_credentials" "available" {}
+
 resource "cosign_sign" "image" {
-  image = "us-docker.pkg.dev/wlynch-chainguard/public/ko-gcloud@sha256:d882f1b1ba89f712f00d955c7268d66f89774f79e922258cd6194ae18e8ac7ce"
+  for_each      = data.cosign_available_credentials.available.available
+  oidc_provider = each.key
+  image         = "ttl.sh/jason@sha256:13b7e62e8df80264dbb747995705a986aa530415763a6c58f84a3ca8af9a5bcd"
 }

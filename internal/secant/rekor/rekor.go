@@ -17,11 +17,14 @@ package rekor
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/models/rekord"
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/tlog"
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
@@ -77,6 +80,12 @@ func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Sig
 	if err != nil {
 		return nil, err
 	}
+
+	tflog.Info(ctx, "uploaded entry", map[string]interface{}{
+		"uuid":           *entry.LogID,
+		"integratedTime": time.Unix(*entry.IntegratedTime, 0).Format(time.RFC3339),
+		"logIndex":       fmt.Sprintf("%d", *entry.LogIndex),
+	})
 
 	bundle, err := cbundle.EntryToBundle(entry), nil
 	if err != nil {

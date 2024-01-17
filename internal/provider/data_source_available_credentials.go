@@ -103,7 +103,7 @@ func (d *AvailableDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	var available []string
+	available := []string{}
 	if interactiveAvailable() {
 		available = append(available, "interactive")
 	}

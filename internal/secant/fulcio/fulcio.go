@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
-	"github.com/google/certificate-transparency-go/x509"
 
+	"github.com/google/certificate-transparency-go/x509"
 	"github.com/google/certificate-transparency-go/x509util"
 	"github.com/sigstore/cosign/v2/pkg/cosign"
 	"github.com/sigstore/cosign/v2/pkg/oci"
