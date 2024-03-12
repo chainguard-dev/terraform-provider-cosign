@@ -19,5 +19,3 @@ This produces a list of available keyless signing credentials.
 
 - `available` (Set of String) This contains the names of available keyless signing credentials.
 - `id` (String) This contains the hash of available keyless signing credentials.
-
-
