@@ -11,7 +11,7 @@ replace github.com/theupdateframework/go-tuf => github.com/theupdateframework/go
 replace go.opentelemetry.io/otel => go.opentelemetry.io/otel v1.17.0
 
 require (
-	github.com/chainguard-dev/terraform-provider-oci v0.0.4
+	github.com/chainguard-dev/terraform-provider-oci v0.0.10
 	github.com/cyberphone/json-canonicalization v0.0.0-20230710064741-aa7fe85c7dbd
 	github.com/go-openapi/runtime v0.26.0
 	github.com/go-openapi/strfmt v0.21.7
@@ -21,7 +21,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-cleanhttp v0.5.2
 	github.com/hashicorp/go-retryablehttp v0.7.5
-	github.com/hashicorp/terraform-plugin-docs v0.14.1
+	github.com/hashicorp/terraform-plugin-docs v0.15.0
 	github.com/hashicorp/terraform-plugin-framework v1.3.5
 	github.com/hashicorp/terraform-plugin-framework-validators v0.12.0
 	github.com/hashicorp/terraform-plugin-go v0.18.0
