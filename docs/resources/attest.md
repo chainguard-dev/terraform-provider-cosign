@@ -63,5 +63,3 @@ Optional:
 
 - `path` (String) The path to a file containing the predicate to attest.
 - `sha256` (String) The sha256 hex hash of the predicate body.
-
-

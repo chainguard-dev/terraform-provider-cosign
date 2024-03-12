@@ -30,5 +30,3 @@ This signs the provided image digest with cosign.
 
 - `id` (String) The immutable digest this resource signs.
 - `signed_ref` (String) This always matches the input digest, but is a convenience for composition.
-
-

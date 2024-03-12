@@ -24,5 +24,3 @@ This copies the provided image digest cosign copy.
 
 - `copied_ref` (String) This always matches the input digest, but is a convenience for composition.
 - `id` (String) The immutable digest this resource copies, along with its signatures, etc.
-
-

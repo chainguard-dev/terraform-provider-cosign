@@ -24,5 +24,3 @@ This verifies the provided image against the specified policy.
 
 - `id` (String) This contains the digest of the image that was verified against the provided policy.
 - `verified_ref` (String) This contains the digest of the image that was verified against the provided policy.
-
-
