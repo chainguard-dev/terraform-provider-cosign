@@ -34,7 +34,7 @@ require (
 	github.com/sigstore/rekor v1.3.4
 	github.com/sigstore/sigstore v1.8.2
 	github.com/transparency-dev/merkle v0.0.2
-	go.uber.org/ratelimit v0.3.0
+	go.uber.org/ratelimit v0.3.1
 	golang.org/x/oauth2 v0.18.0
 )
 
