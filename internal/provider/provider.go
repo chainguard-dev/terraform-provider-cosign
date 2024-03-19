@@ -33,6 +33,8 @@ type ProviderOpts struct {
 	ropts    []remote.Option
 	keychain authn.Keychain
 
+	oidc fulcio.OIDCProvider
+
 	sync.Mutex
 
 	// Keyed off fulcio URL.
@@ -59,7 +61,7 @@ func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
 	return rekorClient, nil
 }
 
-func (p *ProviderOpts) signerVerifier(fulcioUrl string, provider fulcio.OIDCProvider) (*fulcio.SignerVerifier, error) {
+func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier, error) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -72,7 +74,7 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string, provider fulcio.OIDCProv
 		return nil, err
 	}
 	fulcioClient := api.NewClient(furl, api.WithUserAgent("terraform-provider-cosign"))
-	sv, err := fulcio.NewSigner(provider, fulcioClient)
+	sv, err := fulcio.NewSigner(p.oidc, fulcioClient)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +126,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	opts := &ProviderOpts{
 		ropts:        ropts,
 		keychain:     kc,
+		oidc:         &oidcProvider{},
 		signers:      map[string]*fulcio.SignerVerifier{},
 		rekorClients: map[string]*client.Rekor{},
 	}
@@ -144,7 +147,6 @@ func (p *Provider) Resources(ctx context.Context) []func() resource.Resource {
 func (p *Provider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewVerifyDataSource,
-		NewAvailableDataSource,
 	}
 }
 

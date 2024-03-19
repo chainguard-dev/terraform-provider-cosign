@@ -43,12 +43,10 @@ func TestAccResourceCosignCopy(t *testing.T) {
 			// Sign and copy the image, then verify the copy's signature.
 			Config: fmt.Sprintf(`
 resource "cosign_sign" "foo" {
-  oidc_provider = "github-actions"
-  image         = %q
+  image = %q
 }
 
 resource "cosign_attest" "foo" {
-  oidc_provider  = "github-actions"
   image          = cosign_sign.foo.signed_ref
   predicate_type = "https://predicate.type"
   predicate      = jsonencode({
