@@ -26,7 +26,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
-	"github.com/sigstore/cosign/v2/pkg/providers"
 )
 
 var (
@@ -66,8 +65,6 @@ type AttestResourceModel struct {
 	AttestedRef types.String `tfsdk:"attested_ref"`
 	FulcioURL   types.String `tfsdk:"fulcio_url"`
 	RekorURL    types.String `tfsdk:"rekor_url"`
-
-	OIDCProvider types.String `tfsdk:"oidc_provider"`
 }
 
 func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -144,11 +141,6 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"oidc_provider": schema.StringAttribute{
-				MarkdownDescription: "The OIDC provider to use for authentication.",
-				Optional:            false,
-				Required:            true,
 			},
 		},
 		Blocks: map[string]schema.Block{
@@ -295,9 +287,8 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	if os.Getenv("TF_COSIGN_DISABLE") != "" {
 		return digest.String(), errors.New("TF_COSIGN_DISABLE is set, skipping attesting"), nil
 	}
-	p, err := providers.ProvideFrom(ctx, arm.OIDCProvider.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("unable to provide OIDC token: %w", err)
+	if !r.popts.oidc.Enabled(ctx) {
+		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}
 
 	statements := []*stypes.Statement{}
@@ -352,7 +343,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		statements = append(statements, stmt)
 	}
 
-	sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString(), p)
+	sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
 	if err != nil {
 		return "", nil, fmt.Errorf("creating signer: %w", err)
 	}

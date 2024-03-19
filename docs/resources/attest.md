@@ -18,7 +18,6 @@ This attests the provided image digest with cosign.
 ### Required
 
 - `image` (String) The digest of the container image to attest.
-- `oidc_provider` (String) The OIDC provider to use for authentication.
 
 ### Optional
 
