@@ -48,6 +48,7 @@ func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
 	p.Lock()
 	defer p.Unlock()
 
+	// This is a comment
 	if rekorClient, ok := p.rekorClients[rekorUrl]; ok {
 		return rekorClient, nil
 	}
