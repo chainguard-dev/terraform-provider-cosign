@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/sigstore/cosign/v2/pkg/cosign/bundle"

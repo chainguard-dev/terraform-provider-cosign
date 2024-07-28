@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/certificate-transparency-go/x509"
 
 	"github.com/google/certificate-transparency-go/x509util"

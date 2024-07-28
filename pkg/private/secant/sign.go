@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/rekor"
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"

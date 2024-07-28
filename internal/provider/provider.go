@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/fulcio"
-	rclient "github.com/chainguard-dev/terraform-provider-cosign/internal/secant/rekor/client"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
+	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
