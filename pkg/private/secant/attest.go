@@ -9,9 +9,9 @@ import (
 	"io"
 	"net/url"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/models/intoto"
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/tlog"
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/intoto"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"

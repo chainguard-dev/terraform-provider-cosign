@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant"
-	stypes "github.com/chainguard-dev/terraform-provider-cosign/internal/secant/types"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
+	stypes "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"

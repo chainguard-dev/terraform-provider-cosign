@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/internal/secant"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/path"
