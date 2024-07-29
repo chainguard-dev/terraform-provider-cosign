@@ -1,11 +1,13 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
@@ -295,28 +297,22 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 
 	for _, data := range preds {
 		// Write the attestation to a temporary file.
-		var path string
+		var reader io.Reader
 		switch {
 		// Write the predicate to a file to pass to attest.
 		case data.Predicate.ValueString() != "":
-			file, err := os.CreateTemp("", "")
-			if err != nil {
-				return "", nil, err
-			}
-			defer os.Remove(file.Name())
-			if _, err := file.WriteString(data.Predicate.ValueString()); err != nil {
-				return "", nil, err
-			}
-			if err := file.Close(); err != nil {
-				return "", nil, err
-			}
-			path = file.Name()
+			reader = bytes.NewBufferString(data.Predicate.ValueString())
 
 		case len(data.PredicateFile.Elements()) > 0:
 			attrs := data.PredicateFile.Elements()[0].(basetypes.ObjectValue).Attributes()
-			path = attrs["path"].(basetypes.StringValue).ValueString()
+			path := attrs["path"].(basetypes.StringValue).ValueString()
 			expectedHash := attrs["sha256"].(basetypes.StringValue).ValueString()
 
+			// TODO(mattmoor): If we don't want to buffer this into memory, then
+			// we can create an io.Reader that computes the SHA256 as it reads
+			// and upon receiving io.EOF checks that things match.  That said,
+			// it is going to end up in memory for the attestation anyway, so
+			// we just read it all in here.
 			contents, err := os.ReadFile(path)
 			if err != nil {
 				return "", nil, err
@@ -325,17 +321,13 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			if got, want := hex.EncodeToString(rawHash[:]), expectedHash; got != want {
 				return "", nil, fmt.Errorf("sha256(%q) = %s, expected %s", path, got, want)
 			}
+			reader = bytes.NewBuffer(contents)
 
 		default:
 			return "", nil, errors.New("one of predicate or predicate_file must be specified")
 		}
 
-		predicate, err := os.Open(path)
-		if err != nil {
-			return "", nil, fmt.Errorf("open %q: %w", path, err)
-		}
-
-		stmt, err := secant.NewStatement(digest, predicate, data.PredicateType.ValueString())
+		stmt, err := secant.NewStatement(digest, reader, data.PredicateType.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating attestation statement: %w", err)
 		}
