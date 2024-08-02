@@ -20,7 +20,7 @@ import (
 )
 
 // Sign is roughly equivalent to cosign sign.
-func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []string, ropt []remote.Option) error {
+func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
 	cs := rekor.NewCosigner(sv, rekorClient)
 
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
@@ -37,12 +37,7 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 		return fmt.Errorf("unhandled conflict type: %q", conflict)
 	}
 
-	for _, inputImg := range imgs {
-		ref, err := name.ParseReference(inputImg)
-		if err != nil {
-			return err
-		}
-
+	for _, ref := range imgs {
 		se, err := ociremote.SignedEntity(ref, opts...)
 		if err != nil {
 			return fmt.Errorf("accessing entity: %w", err)
