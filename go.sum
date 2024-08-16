@@ -837,8 +837,8 @@ github.com/shopspring/decimal v1.3.1 h1:2Usl1nmF/WZucqkFZhnfFYxxxu8LG21F6nPQBE5g
 github.com/shopspring/decimal v1.3.1/go.mod h1:DKyhrW/HYNuLGql+MJL6WCR6knT2jwCFRcu2hWCYk4o=
 github.com/sigstore/cosign/v2 v2.4.0 h1:2NdidNgClg+oXr/fDIr37E/BE6j00gqgUhSiBK2kjSQ=
 github.com/sigstore/cosign/v2 v2.4.0/go.mod h1:j+fH1DCUkcn92qp6ezDj4JbGMri6eG1nLJC+hs64rvc=
-github.com/sigstore/fulcio v1.6.1 h1:9LcnJXeWglr4gDiIBTtUbof9pXnsvzoB8er/vfqnkng=
-github.com/sigstore/fulcio v1.6.1/go.mod h1:nHMoqPZZYPg7yhEvPIHv4NBr5UDK1HD6coB8Nk+JvX8=
+github.com/sigstore/fulcio v1.6.2 h1:lJT+SrH6LFic6vofey/NdvMOAjcWLVYk8ZT74uaxI5w=
+github.com/sigstore/fulcio v1.6.2/go.mod h1:nHMoqPZZYPg7yhEvPIHv4NBr5UDK1HD6coB8Nk+JvX8=
 github.com/sigstore/policy-controller v0.10.0 h1:fVMJfrvolDQUJ5nuKiZl0h8qoirEkEziVVDTNjLq5c0=
 github.com/sigstore/policy-controller v0.10.0/go.mod h1:A0ypukI8JQoOZ3R5Xs6D0z5qfk0OsbY92j73xiwJY7Y=
 github.com/sigstore/protobuf-specs v0.3.2 h1:nCVARCN+fHjlNCk3ThNXwrZRqIommIeNKWwQvORuRQo=
