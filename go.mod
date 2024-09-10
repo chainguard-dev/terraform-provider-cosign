@@ -1,6 +1,7 @@
 module github.com/chainguard-dev/terraform-provider-cosign
 
-go 1.22.5
+go 1.23.1
+
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.0.17
 	github.com/cyberphone/json-canonicalization v0.0.0-20231011164504-785e29786b46
