@@ -1,6 +1,7 @@
 module github.com/chainguard-dev/terraform-provider-cosign
 
 go 1.23.2
+
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.0.17
 	github.com/cyberphone/json-canonicalization v0.0.0-20231011164504-785e29786b46
@@ -145,7 +146,7 @@ require (
 	github.com/go-openapi/validate v0.24.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
