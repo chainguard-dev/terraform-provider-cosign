@@ -1,6 +1,7 @@
 module github.com/chainguard-dev/terraform-provider-cosign
 
 go 1.23.2
+
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.0.17
 	github.com/cyberphone/json-canonicalization v0.0.0-20231011164504-785e29786b46
@@ -26,7 +27,7 @@ require (
 	github.com/sigstore/sigstore v1.8.10
 	github.com/transparency-dev/merkle v0.0.2
 	go.uber.org/ratelimit v0.3.1
-	golang.org/x/oauth2 v0.23.0
+	golang.org/x/oauth2 v0.24.0
 )
 
 require (
