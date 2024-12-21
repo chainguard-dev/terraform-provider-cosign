@@ -24,7 +24,7 @@ require (
 	github.com/sigstore/fulcio v1.6.5
 	github.com/sigstore/policy-controller v0.11.0
 	github.com/sigstore/rekor v1.3.7
-	github.com/sigstore/sigstore v1.8.10
+	github.com/sigstore/sigstore v1.8.11
 	github.com/transparency-dev/merkle v0.0.2
 	go.uber.org/ratelimit v0.3.1
 	golang.org/x/oauth2 v0.24.0
