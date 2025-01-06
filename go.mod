@@ -27,7 +27,7 @@ require (
 	github.com/sigstore/sigstore v1.8.11
 	github.com/transparency-dev/merkle v0.0.2
 	go.uber.org/ratelimit v0.3.1
-	golang.org/x/oauth2 v0.24.0
+	golang.org/x/oauth2 v0.25.0
 )
 
 require (
