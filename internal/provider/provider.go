@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
@@ -105,7 +106,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		return
 	}
 
-	kc := authn.NewMultiKeychain(google.Keychain, authn.DefaultKeychain)
+	kc := authn.NewMultiKeychain(google.Keychain, authn.RefreshingKeychain(authn.DefaultKeychain, 30*time.Minute))
 	ropts := []remote.Option{
 		remote.WithAuthFromKeychain(kc),
 		remote.WithUserAgent("terraform-provider-apko/" + p.version),
