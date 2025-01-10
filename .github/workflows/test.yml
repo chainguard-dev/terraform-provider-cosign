@@ -56,3 +56,25 @@ jobs:
       - run: go build -v .
 
       - run: TF_ACC=1 go test -v -cover ./internal/provider/
+
+  check:
+    permissions:
+      actions: read
+    needs:
+      - test
+    runs-on: ubuntu-latest
+    if: always() # always run as required and if any dependent job is skipped, this is skipped if not always
+    steps:
+      - uses: step-security/harden-runner@0080882f6c36860b6ba35c610c98ce87d4e2f26f # v2.10.2
+        with:
+          egress-policy: audit
+
+      - uses: technote-space/workflow-conclusion-action@45ce8e0eb155657ab8ccf346ade734257fd196a5 # v3.0.3
+
+      - if: ${{ env.WORKFLOW_CONCLUSION == 'success' }}
+        working-directory: /tmp
+        run: echo ${{ env.WORKFLOW_CONCLUSION }} && exit 0
+
+      - if: ${{ env.WORKFLOW_CONCLUSION == 'failure' }}
+        working-directory: /tmp
+        run: echo ${{ env.WORKFLOW_CONCLUSION }} && exit 1
