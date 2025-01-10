@@ -73,3 +73,4 @@ resource "cosign_attest" "example" {
 The provider will skip signing/attesting when ambient credentials are not
 present, but can also be explicitly disabled by setting `TF_COSIGN_DISABLE` to
 any value.
+
