@@ -109,7 +109,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	kc := authn.NewMultiKeychain(google.Keychain, authn.RefreshingKeychain(authn.DefaultKeychain, 30*time.Minute))
 	ropts := []remote.Option{
 		remote.WithAuthFromKeychain(kc),
-		remote.WithUserAgent("terraform-provider-apko/" + p.version),
+		remote.WithUserAgent("terraform-provider-cosign/" + p.version),
 	}
 
 	puller, err := remote.NewPuller(ropts...)
