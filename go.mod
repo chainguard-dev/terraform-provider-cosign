@@ -24,10 +24,10 @@ require (
 	github.com/sigstore/fulcio v1.6.5
 	github.com/sigstore/policy-controller v0.12.0
 	github.com/sigstore/rekor v1.3.7
-	github.com/sigstore/sigstore v1.8.12
+	github.com/sigstore/sigstore v1.8.15
 	github.com/transparency-dev/merkle v0.0.2
 	go.uber.org/ratelimit v0.3.1
-	golang.org/x/oauth2 v0.25.0
+	golang.org/x/oauth2 v0.26.0
 )
 
 require (
@@ -242,7 +242,7 @@ require (
 	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/sigstore/protobuf-specs v0.3.2 // indirect
+	github.com/sigstore/protobuf-specs v0.4.0 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/aws v1.8.11 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/azure v1.8.11 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/gcp v1.8.11 // indirect
@@ -304,7 +304,7 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20241113202542-65e8d215514f // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241118233622-e639e219e697 // indirect
 	google.golang.org/grpc v1.69.4 // indirect
-	google.golang.org/protobuf v1.36.3 // indirect
+	google.golang.org/protobuf v1.36.4 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
