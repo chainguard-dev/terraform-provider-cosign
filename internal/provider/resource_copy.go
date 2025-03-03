@@ -110,7 +110,7 @@ func (r *CopyResource) doCopy(ctx context.Context, data *CopyResourceModel) (str
 	}
 
 	dstDig := dst.Digest(digest.DigestStr()).String()
-	if err := copy.CopyCmd(ctx, ropts, digest.String(), dstDig, false, false, []string{"sig", "sbom", "att"}, ""); err != nil {
+	if err := copy.CopyCmd(ctx, ropts, digest.String(), dstDig, false /* sigOnly */, true /* force */, []string{"sig", "sbom", "att"}, "" /* platform */); err != nil {
 		return "", fmt.Errorf("Unable to copy image: %w", err)
 	}
 	return dstDig, nil
