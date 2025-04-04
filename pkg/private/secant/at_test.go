@@ -81,7 +81,11 @@ func TestNewStatements(t *testing.T) {
 		want:       0,
 	}} {
 		t.Run(fmt.Sprintf("newStatements[%d]", i), func(t *testing.T) {
-			statements, err := newStatements(tc.statements, tc.sigments, tc.conflict)
+			op, err := newAttestConflictOp[*sigment](tc.conflict)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, statements, err := op.mergeAttestations(tc.sigments, tc.statements)
 			if err != nil {
 				if !tc.err {
 					t.Error(err)

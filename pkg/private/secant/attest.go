@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/intoto"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
@@ -19,6 +20,7 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/cosign/attestation"
 	"github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
+	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
@@ -57,6 +59,10 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 	}, nil
 }
 
+type attestConflictOp[S sigsubset] interface {
+	mergeAttestations(base []S, proposed []*types.Statement) (newBase []S, newProposed []*types.Statement, err error)
+}
+
 // Attest is roughly equivalent to cosign attest.
 // The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
 func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
@@ -77,10 +83,15 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 		return fmt.Errorf("getting attestations: %w", err)
 	}
 
-	statements, err = newStatements(statements, sigs, conflict)
+	op, err := newAttestConflictOp[oci.Signature](conflict)
 	if err != nil {
-		return fmt.Errorf("failed to determine new statements: %w", err)
+		return fmt.Errorf("getting replace attestations op: %w", err)
 	}
+	newSigs, statements, err := op.mergeAttestations(sigs, statements)
+	if err != nil {
+		return fmt.Errorf("evaluating which attestations to replace: %w", err)
+	}
+	se = &replaceSignedEntityAttestations{SignedEntity: se, atts: newSigs}
 
 	// If there are no net new statements, we can skip the write entirely.
 	if len(statements) == 0 {
@@ -171,13 +182,8 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 			return err
 		}
 
-		signOpts := []mutate.SignOption{}
-		if conflict != Append {
-			signOpts = append(signOpts, mutate.WithReplaceOp(replacePredicate(predicateType)))
-		}
-
 		// Attach the attestation to the entity.
-		se, err = mutate.AttachAttestationToEntity(se, att, signOpts...)
+		se, err = mutate.AttachAttestationToEntity(se, att)
 		if err != nil {
 			return err
 		}
@@ -208,13 +214,32 @@ func parsePredicateType(t string) (string, error) {
 	return uri, nil
 }
 
+func newAttestConflictOp[S sigsubset](conflict string) (attestConflictOp[S], error) {
+	switch conflict {
+	case "REPLACE":
+		return &replaceAttestations[S]{skipSame: false}, nil
+	case "APPEND":
+		return &appendAttestations[S]{}, nil
+	case "SKIPSAME":
+		return &replaceAttestations[S]{skipSame: true}, nil
+	default:
+		return nil, fmt.Errorf("invlaid conflict %q", conflict)
+	}
+}
+
+type appendAttestations[S sigsubset] struct{}
+
+func (a *appendAttestations[S]) mergeAttestations(sigs []S, stmts []*types.Statement) ([]S, []*types.Statement, error) {
+	return sigs, stmts, nil
+}
+
+type replaceAttestations[S sigsubset] struct {
+	skipSame bool
+}
+
 // Returns only the statements that we actually need to write.
 // This allows us to send less traffic to rekor, which means we throttle less.
-func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflict string) ([]*types.Statement, error) {
-	if conflict == Append {
-		return statements, nil
-	}
-
+func (r *replaceAttestations[S]) mergeAttestations(sigs []S, statements []*types.Statement) ([]S, []*types.Statement, error) {
 	needed := map[string]struct{}{}
 
 	// Group desired statements by predicateType.
@@ -222,7 +247,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 	for _, statement := range statements {
 		pt, err := parsePredicateType(statement.Type)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		stmts, ok := ptToStatements[pt]
@@ -238,7 +263,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 	for _, sig := range sigs {
 		pt, err := getPredicateType(sig)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		sigs, ok := ptToSigs[pt]
@@ -252,7 +277,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 	for pt, stmts := range ptToStatements {
 		// This is user error giving us multiple predicateTypes because we would overwrite one of them.
 		if len(stmts) != 1 {
-			return nil, fmt.Errorf("expected 1 statement per predicateType, saw %d for %q", len(stmts), pt)
+			return nil, nil, fmt.Errorf("expected 1 statement per predicateType, saw %d for %q", len(stmts), pt)
 		}
 
 		stmt := stmts[0]
@@ -265,13 +290,9 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 			continue
 		}
 
-		if conflict == Replace {
+		if !r.skipSame {
 			needed[stmt.Type] = struct{}{}
 			continue
-		}
-
-		if conflict != SkipSame {
-			return nil, fmt.Errorf("unexpected value for 'conflict': %q", conflict)
 		}
 
 		// There is a single existing statement.
@@ -279,12 +300,12 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 		sig := sigs[0]
 		newHash, _, err := v1.SHA256(bytes.NewReader(stmt.Payload))
 		if err != nil {
-			return nil, fmt.Errorf("computing statement payloadHash: %w", err)
+			return nil, nil, fmt.Errorf("computing statement payloadHash: %w", err)
 		}
 
 		bundle, err := sig.Bundle()
 		if err != nil {
-			return nil, fmt.Errorf("getting sig bundle: %w", err)
+			return nil, nil, fmt.Errorf("getting sig bundle: %w", err)
 		}
 
 		payloadHash, err := intoto.PayloadHash(bundle)
@@ -293,7 +314,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 			// We may want to surface a warning and overwrite it because it probably means we switched payload formats.
 			// Until then, it means something else (not tf-cosign) added an attestation with a conflicting predicateType,
 			// so play it safe and just bail out.
-			return nil, fmt.Errorf("getting payloadHash from bundle: %w", err)
+			return nil, nil, fmt.Errorf("getting payloadHash from bundle: %w", err)
 		}
 
 		// The new statement is different from the existing one, so we need to replace it.
@@ -303,14 +324,27 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 	}
 
 	// This is kinda weird but we do it like this to keep the original order (go maps are random).
-	result := []*types.Statement{}
+	resultStatements := []*types.Statement{}
 	for _, stmt := range statements {
 		if _, ok := needed[stmt.Type]; ok {
-			result = append(result, stmt)
+			resultStatements = append(resultStatements, stmt)
+		}
+	}
+	var resultSigs []S
+	for _, sig := range sigs {
+		pt, err := getPredicateType(sig)
+		if err != nil {
+			return nil, nil, fmt.Errorf("getting predicate type: %w", err)
+		}
+		if _, ok := needed[pt]; !ok {
+			fmt.Fprintln(os.Stderr, "Replacing attestation predicate:", pt)
+			resultSigs = append(resultSigs, sig)
+		} else {
+			fmt.Fprintln(os.Stderr, "Not replacing attestation predicate:", pt)
 		}
 	}
 
-	return result, nil
+	return resultSigs, resultStatements, nil
 }
 
 // A subset of oci.Signature that we use so we can test this more easily.
