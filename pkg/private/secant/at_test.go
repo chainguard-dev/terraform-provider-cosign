@@ -3,6 +3,7 @@ package secant
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,7 +12,11 @@ import (
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"github.com/sigstore/cosign/v2/pkg/cosign/bundle"
+	"github.com/sigstore/cosign/v2/pkg/oci"
+	"github.com/sigstore/cosign/v2/pkg/oci/static"
+	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 )
 
 func TestNewStatements(t *testing.T) {
@@ -40,48 +45,48 @@ func TestNewStatements(t *testing.T) {
 
 	for i, tc := range []struct {
 		statements []*types.Statement
-		sigments   []*sigment
+		sigments   []oci.Signature
 		conflict   string
 		want       int
 		err        bool
 	}{{
 		statements: []*types.Statement{sbom, sbom2, prov},
-		sigments:   []*sigment{},
+		sigments:   []oci.Signature{},
 		conflict:   Append,
 		want:       3,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
-		sigments:   sigments(sbom, sbom2, prov),
+		sigments:   sigs(sbom, sbom2, prov),
 		conflict:   Append,
 		want:       3,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
-		sigments:   []*sigment{},
+		sigments:   []oci.Signature{},
 		conflict:   Replace,
 		err:        true,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
-		sigments:   sigments(sbom, sbom2, prov),
+		sigments:   sigs(sbom, sbom2, prov),
 		conflict:   Replace,
 		want:       2,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
-		sigments:   []*sigment{},
+		sigments:   []oci.Signature{},
 		conflict:   SkipSame,
 		err:        true,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
-		sigments:   sigments(sbom, sbom2, prov),
+		sigments:   sigs(sbom, sbom2, prov),
 		conflict:   SkipSame,
 		want:       1,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
-		sigments:   sigments(sbom2, prov),
+		sigments:   sigs(sbom2, prov),
 		conflict:   SkipSame,
 		want:       0,
 	}} {
 		t.Run(fmt.Sprintf("newStatements[%d]", i), func(t *testing.T) {
-			op, err := newAttestConflictOp[*sigment](tc.conflict)
+			op, err := newAttestConflictOp[oci.Signature](tc.conflict)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,10 +105,29 @@ func TestNewStatements(t *testing.T) {
 	}
 }
 
-func sigments(stmts ...*types.Statement) []*sigment {
-	result := []*sigment{}
+func sigs(stmts ...*types.Statement) []oci.Signature {
+	result := []oci.Signature{}
 	for _, s := range stmts {
-		result = append(result, &sigment{s})
+		env := dsse.Envelope{
+			PayloadType: ctypes.IntotoPayloadType,
+			Payload:     base64.StdEncoding.EncodeToString(s.Payload),
+			Signatures: []dsse.Signature{
+				{
+					Sig: base64.StdEncoding.EncodeToString([]byte("unused")),
+				},
+			},
+		}
+
+		envelope, err := json.Marshal(env)
+		if err != nil {
+			panic(fmt.Errorf("error marshalling envelope: %w", err))
+		}
+
+		sig, err := static.NewAttestation(envelope, static.WithBundle(toBundle(s)))
+		if err != nil {
+			panic(fmt.Errorf("error creating attestation: %w", err))
+		}
+		result = append(result, sig)
 	}
 
 	return result
@@ -128,20 +152,20 @@ func (s *sigment) Payload() ([]byte, error) {
 	return nil, errors.New("this should not get called because of Annotations")
 }
 
-func (s *sigment) Bundle() (*bundle.RekorBundle, error) {
+func toBundle(s *types.Statement) *bundle.RekorBundle {
 	return &bundle.RekorBundle{
 		SignedEntryTimestamp: []byte("unused"),
 		Payload: bundle.RekorPayload{
-			Body:           s.body(),
+			Body:           toBody(s),
 			IntegratedTime: 0,
 			LogIndex:       0,
 			LogID:          "unused",
 		},
-	}, nil
+	}
 }
 
-func (s *sigment) body() string {
-	return base64.StdEncoding.EncodeToString([]byte(s.rawBody()))
+func toBody(s *types.Statement) string {
+	return base64.StdEncoding.EncodeToString([]byte(toRawBody(s)))
 }
 
 const bodyTmpl = `{
@@ -162,13 +186,13 @@ const bodyTmpl = `{
 	}
 }`
 
-func (s *sigment) rawBody() string {
-	digest := s.statement.Digest.Identifier()
+func toRawBody(s *types.Statement) string {
+	digest := s.Digest.Identifier()
 	_, hex, ok := strings.Cut(digest, ":")
 	if !ok {
 		panic("unexpected digest: " + digest)
 	}
-	payloadHash, _, err := v1.SHA256(bytes.NewReader(s.statement.Payload))
+	payloadHash, _, err := v1.SHA256(bytes.NewReader(s.Payload))
 	if err != nil {
 		panic(fmt.Errorf("computing statement payloadHash: %w", err))
 	}
