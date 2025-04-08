@@ -19,7 +19,7 @@ import (
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 )
 
-func TestNewStatements(t *testing.T) {
+func TestMergeAttestations(t *testing.T) {
 	digest, err := name.NewDigest("example.com/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
 		t.Fatal(err)
@@ -46,51 +46,47 @@ func TestNewStatements(t *testing.T) {
 	for i, tc := range []struct {
 		statements []*types.Statement
 		sigments   []oci.Signature
-		conflict   string
+		conflict   AttestConflictOp
 		want       int
 		err        bool
 	}{{
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   []oci.Signature{},
-		conflict:   Append,
+		conflict:   &AppendOp{},
 		want:       3,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   sigs(sbom, sbom2, prov),
-		conflict:   Append,
+		conflict:   &AppendOp{},
 		want:       3,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   []oci.Signature{},
-		conflict:   Replace,
+		conflict:   &ReplaceOp{},
 		err:        true,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
 		sigments:   sigs(sbom, sbom2, prov),
-		conflict:   Replace,
+		conflict:   &ReplaceOp{},
 		want:       2,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   []oci.Signature{},
-		conflict:   SkipSame,
+		conflict:   &ReplaceOp{},
 		err:        true,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
 		sigments:   sigs(sbom, sbom2, prov),
-		conflict:   SkipSame,
+		conflict:   &ReplaceOp{SkipSame: true},
 		want:       1,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
 		sigments:   sigs(sbom2, prov),
-		conflict:   SkipSame,
+		conflict:   &ReplaceOp{SkipSame: true},
 		want:       0,
 	}} {
 		t.Run(fmt.Sprintf("newStatements[%d]", i), func(t *testing.T) {
-			op, err := newAttestConflictOp[oci.Signature](tc.conflict)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, statements, err := op.mergeAttestations(tc.sigments, tc.statements)
+			_, statements, err := tc.conflict.MergeAttestations(tc.sigments, tc.statements)
 			if err != nil {
 				if !tc.err {
 					t.Error(err)

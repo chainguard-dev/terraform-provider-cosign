@@ -59,13 +59,14 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 	}, nil
 }
 
-type attestConflictOp[S sigsubset] interface {
-	mergeAttestations(base []S, proposed []*types.Statement) (newBase []S, newProposed []*types.Statement, err error)
+// AttestConflictOp merges a set of proposed intoto Statements into an existing set of attestation signatures.
+type AttestConflictOp interface {
+	MergeAttestations(base []oci.Signature, proposed []*types.Statement) (newBase []oci.Signature, newProposed []*types.Statement, err error)
 }
 
 // Attest is roughly equivalent to cosign attest.
 // The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
-func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
+func Attest(ctx context.Context, conflictOp AttestConflictOp, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
 	digest := statements[0].Digest
 
 	// We don't actually need to access the remote entity to attach things to it
@@ -83,11 +84,7 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 		return fmt.Errorf("getting attestations: %w", err)
 	}
 
-	op, err := newAttestConflictOp[oci.Signature](conflict)
-	if err != nil {
-		return fmt.Errorf("getting replace attestations op: %w", err)
-	}
-	newSigs, statements, err := op.mergeAttestations(sigs, statements)
+	newSigs, statements, err := conflictOp.MergeAttestations(sigs, statements)
 	if err != nil {
 		return fmt.Errorf("evaluating which attestations to replace: %w", err)
 	}
@@ -214,32 +211,22 @@ func parsePredicateType(t string) (string, error) {
 	return uri, nil
 }
 
-func newAttestConflictOp[S sigsubset](conflict string) (attestConflictOp[S], error) {
-	switch conflict {
-	case "REPLACE":
-		return &replaceAttestations[S]{skipSame: false}, nil
-	case "APPEND":
-		return &appendAttestations[S]{}, nil
-	case "SKIPSAME":
-		return &replaceAttestations[S]{skipSame: true}, nil
-	default:
-		return nil, fmt.Errorf("invlaid conflict %q", conflict)
-	}
-}
+// Append adds signatures onto an image without modifying the existing signatures.
+type AppendOp struct{}
 
-type appendAttestations[S sigsubset] struct{}
-
-func (a *appendAttestations[S]) mergeAttestations(sigs []S, stmts []*types.Statement) ([]S, []*types.Statement, error) {
+func (a *AppendOp) MergeAttestations(sigs []oci.Signature, stmts []*types.Statement) ([]oci.Signature, []*types.Statement, error) {
 	return sigs, stmts, nil
 }
 
-type replaceAttestations[S sigsubset] struct {
-	skipSame bool
+// Replace replaces signatures on the image.
+type ReplaceOp struct {
+	// SkipSame controls whether equivalent signatures are written onto the image (when false) or skipped (when true)
+	SkipSame bool
 }
 
 // Returns only the statements that we actually need to write.
 // This allows us to send less traffic to rekor, which means we throttle less.
-func (r *replaceAttestations[S]) mergeAttestations(sigs []S, statements []*types.Statement) ([]S, []*types.Statement, error) {
+func (r *ReplaceOp) MergeAttestations(sigs []oci.Signature, statements []*types.Statement) ([]oci.Signature, []*types.Statement, error) {
 	needed := map[string]struct{}{}
 
 	// Group desired statements by predicateType.
@@ -290,7 +277,7 @@ func (r *replaceAttestations[S]) mergeAttestations(sigs []S, statements []*types
 			continue
 		}
 
-		if !r.skipSame {
+		if !r.SkipSame {
 			needed[stmt.Type] = struct{}{}
 			continue
 		}
@@ -330,7 +317,7 @@ func (r *replaceAttestations[S]) mergeAttestations(sigs []S, statements []*types
 			resultStatements = append(resultStatements, stmt)
 		}
 	}
-	var resultSigs []S
+	var resultSigs []oci.Signature
 	for _, sig := range sigs {
 		pt, err := getPredicateType(sig)
 		if err != nil {

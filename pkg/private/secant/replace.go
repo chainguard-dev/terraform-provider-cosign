@@ -18,7 +18,7 @@ const (
 	Append = "APPEND"
 )
 
-func getPredicateType(s sigsubset) (string, error) {
+func getPredicateType(s oci.Signature) (string, error) {
 	anns, err := s.Annotations()
 	if err != nil {
 		return "", fmt.Errorf("could not get annotations: %w", err)

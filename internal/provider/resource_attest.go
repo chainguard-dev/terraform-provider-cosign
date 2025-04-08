@@ -348,11 +348,29 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.ropts); err != nil {
+	op, err := toAttestConflictOp(arm)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if err := secant.Attest(ctx, op, statements, sv, rekorClient, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 	}
 
 	return digest.String(), nil, nil
+}
+
+func toAttestConflictOp(arm *AttestResourceModel) (secant.AttestConflictOp, error) {
+	switch arm.Conflict.ValueString() {
+	case "REPLACE":
+		return &secant.ReplaceOp{SkipSame: false}, nil
+	case "APPEND":
+		return &secant.AppendOp{}, nil
+	case "SKIPSAME":
+		return &secant.ReplaceOp{SkipSame: true}, nil
+	default:
+		return nil, fmt.Errorf("invalid conflict %q", arm.Conflict.ValueString())
+	}
 }
 
 func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
