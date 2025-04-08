@@ -9,14 +9,23 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 )
 
-const (
+var (
 	// Replace replaces signatures on the image
-	Replace = "REPLACE"
+	Replace = &ReplaceOp{}
 	// SkipSame skips writing identical signatures but otherwise replaces signatures on the image.
-	SkipSame = "SKIPSAME"
+	SkipSame = &ReplaceOp{SkipSame: true}
 	// Append appends signatures on the image.
-	Append = "APPEND"
+	Append = &AppendOp{}
 )
+
+// AppendOp adds signatures onto an image without modifying the existing signatures.
+type AppendOp struct{}
+
+// ReplaceOp replaces signatures on the image.
+type ReplaceOp struct {
+	// SkipSame controls whether equivalent signatures are written onto the image (when false) or skipped (when true)
+	SkipSame bool
+}
 
 func getPredicateType(s oci.Signature) (string, error) {
 	anns, err := s.Annotations()
@@ -85,6 +94,23 @@ func (r *replaceSignedEntityAttestations) Attestations() (oci.Signatures, error)
 		return nil, err
 	}
 	replaced, err := mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.atts})
+	if err != nil {
+		return nil, err
+	}
+	return replaced, err
+}
+
+type replaceSignedEntitySignatures struct {
+	oci.SignedEntity
+	sigs []oci.Signature
+}
+
+func (r *replaceSignedEntitySignatures) Signatures() (oci.Signatures, error) {
+	atts, err := r.SignedEntity.Signatures()
+	if err != nil {
+		return nil, err
+	}
+	replaced, err := mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.sigs})
 	if err != nil {
 		return nil, err
 	}

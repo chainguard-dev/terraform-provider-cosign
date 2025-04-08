@@ -211,17 +211,8 @@ func parsePredicateType(t string) (string, error) {
 	return uri, nil
 }
 
-// Append adds signatures onto an image without modifying the existing signatures.
-type AppendOp struct{}
-
 func (a *AppendOp) MergeAttestations(sigs []oci.Signature, stmts []*types.Statement) ([]oci.Signature, []*types.Statement, error) {
 	return sigs, stmts, nil
-}
-
-// Replace replaces signatures on the image.
-type ReplaceOp struct {
-	// SkipSame controls whether equivalent signatures are written onto the image (when false) or skipped (when true)
-	SkipSame bool
 }
 
 // Returns only the statements that we actually need to write.

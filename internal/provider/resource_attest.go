@@ -348,7 +348,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	op, err := toAttestConflictOp(arm)
+	op, err := toConflictOp(arm.Conflict.ValueString())
 	if err != nil {
 		return "", nil, err
 	}
@@ -358,19 +358,6 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	}
 
 	return digest.String(), nil, nil
-}
-
-func toAttestConflictOp(arm *AttestResourceModel) (secant.AttestConflictOp, error) {
-	switch arm.Conflict.ValueString() {
-	case "REPLACE":
-		return &secant.ReplaceOp{SkipSame: false}, nil
-	case "APPEND":
-		return &secant.AppendOp{}, nil
-	case "SKIPSAME":
-		return &secant.ReplaceOp{SkipSame: true}, nil
-	default:
-		return nil, fmt.Errorf("invalid conflict %q", arm.Conflict.ValueString())
-	}
 }
 
 func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

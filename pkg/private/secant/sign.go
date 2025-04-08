@@ -19,23 +19,17 @@ import (
 	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
 )
 
+// SignConflictOp merges a set of proposed intoto Statements into an existing set of attestation signatures.
+type SignConflictOp interface {
+	MergeSignatures(base []oci.Signature, payload []byte) (newBase []oci.Signature, shouldSign bool, err error)
+}
+
 // Sign is roughly equivalent to cosign sign.
-func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
+func Sign(ctx context.Context, conflictOp SignConflictOp, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
 	cs := rekor.NewCosigner(sv, rekorClient)
 
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	signOpts := []mutate.SignOption{}
-	switch conflict {
-	case Append:
-		// Don't add any options. Without replace op or dupe detector, we will append.
-	case Replace:
-		signOpts = append(signOpts, mutate.WithReplaceOp(replaceSignatures{}))
-	case SkipSame:
-		signOpts = append(signOpts, mutate.WithDupeDetector(skipSameSignatures{}))
-	default:
-		// This should not happen because schema validation would catch it.
-		return fmt.Errorf("unhandled conflict type: %q", conflict)
-	}
 
 	for _, ref := range imgs {
 		se, err := ociremote.SignedEntity(ref, opts...)
@@ -50,7 +44,32 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 				return fmt.Errorf("computing digest: %w", err)
 			}
 			digest := ref.Context().Digest(d.String())
-			if err := signDigest(ctx, digest, annotations, signOpts, cs, se, opts); err != nil {
+			payload, err := (&sigPayload.Cosign{
+				Image:       digest,
+				Annotations: annotations,
+			}).MarshalJSON()
+			if err != nil {
+				return fmt.Errorf("payload: %w", err)
+			}
+			signatures, err := se.Signatures()
+			if err != nil {
+				return fmt.Errorf("getting signatures: %w", err)
+			}
+			sigs, err := signatures.Get()
+			if err != nil {
+				return fmt.Errorf("reading signatures: %w", err)
+			}
+			newSigs, shouldSign, err := conflictOp.MergeSignatures(sigs, payload)
+			if err != nil {
+				return fmt.Errorf("merging signatures: %w", err)
+			}
+			if !shouldSign {
+				fmt.Fprintln(os.Stderr, "Skipping signing digest:", digest)
+				return nil
+			}
+			se = &replaceSignedEntitySignatures{SignedEntity: se, sigs: newSigs}
+
+			if err := signDigest(ctx, digest, payload, signOpts, cs, se, opts); err != nil {
 				return fmt.Errorf("signing digest: %w", err)
 			}
 			return nil
@@ -62,15 +81,7 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 	return nil
 }
 
-func signDigest(ctx context.Context, digest name.Digest, annotations map[string]interface{}, signOpts []mutate.SignOption, cs types.Cosigner, se oci.SignedEntity, opts []ociremote.Option) error {
-	payload, err := (&sigPayload.Cosign{
-		Image:       digest,
-		Annotations: annotations,
-	}).MarshalJSON()
-	if err != nil {
-		return fmt.Errorf("payload: %w", err)
-	}
-
+func signDigest(ctx context.Context, digest name.Digest, payload []byte, signOpts []mutate.SignOption, cs types.Cosigner, se oci.SignedEntity, opts []ociremote.Option) error {
 	ociSig, err := cs.Cosign(ctx, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -86,72 +97,39 @@ func signDigest(ctx context.Context, digest name.Digest, annotations map[string]
 	return ociremote.WriteSignatures(digest.Repository, newSE, opts...)
 }
 
-type replaceSignatures struct{}
+func (r *ReplaceOp) MergeSignatures(sigs []oci.Signature, payload []byte) ([]oci.Signature, bool, error) {
+	var result []oci.Signature
+	shouldSign := true
 
-func (r replaceSignatures) Replace(signatures oci.Signatures, o oci.Signature) (oci.Signatures, error) {
-	sigs, err := signatures.Get()
+	digest, _, err := v1.SHA256(bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
-	}
-
-	ros := &replaceOCISignatures{Signatures: signatures}
-
-	sigsCopy := make([]oci.Signature, 0, len(sigs))
-	sigsCopy = append(sigsCopy, o)
-
-	if len(sigs) == 0 {
-		ros.sigs = append(ros.sigs, sigsCopy...)
-		return ros, nil
-	}
-
-	digest, err := o.Digest()
-	if err != nil {
-		return nil, err
+		return nil, false, fmt.Errorf("calculating digest: %w", err)
 	}
 
 	for _, s := range sigs {
 		existingDigest, err := s.Digest()
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		if digest == existingDigest {
-			fmt.Fprintln(os.Stderr, "Replacing signature with digest:", digest)
+			if r.SkipSame {
+				fmt.Fprintln(os.Stderr, "Skipping signing for signature as digest:", digest)
+				shouldSign = false
+				result = append(result, s)
+			} else {
+				fmt.Fprintln(os.Stderr, "Replacing signature with digest:", digest)
+			}
 			continue
 		}
 
 		fmt.Fprintln(os.Stderr, "Not replacing signature with digest:", digest)
-		sigsCopy = append(sigsCopy, s)
+		result = append(result, s)
 	}
 
-	ros.sigs = append(ros.sigs, sigsCopy...)
-
-	return ros, nil
+	return result, shouldSign, nil
 }
 
-type skipSameSignatures struct{}
-
-func (r skipSameSignatures) Find(signatures oci.Signatures, o oci.Signature) (oci.Signature, error) {
-	sigs, err := signatures.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	digest, err := o.Digest()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, s := range sigs {
-		existingDigest, err := s.Digest()
-		if err != nil {
-			return nil, err
-		}
-
-		if digest == existingDigest {
-			return s, nil
-		}
-	}
-
-	return nil, nil
+func (a *AppendOp) MergeSignatures(sigs []oci.Signature, payload []byte) ([]oci.Signature, bool, error) {
+	return sigs, true, nil
 }
