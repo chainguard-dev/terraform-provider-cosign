@@ -26,11 +26,11 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	signOpts := []mutate.SignOption{}
 	switch conflict {
-	case "APPEND":
+	case Append:
 		// Don't add any options. Without replace op or dupe detector, we will append.
-	case "REPLACE":
+	case Replace:
 		signOpts = append(signOpts, mutate.WithReplaceOp(replaceSignatures{}))
-	case "SKIPSAME":
+	case SkipSame:
 		signOpts = append(signOpts, mutate.WithDupeDetector(skipSameSignatures{}))
 	default:
 		// This should not happen because schema validation would catch it.

@@ -172,7 +172,7 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 		}
 
 		signOpts := []mutate.SignOption{}
-		if conflict != "APPEND" {
+		if conflict != Append {
 			signOpts = append(signOpts, mutate.WithReplaceOp(replacePredicate(predicateType)))
 		}
 
@@ -211,7 +211,7 @@ func parsePredicateType(t string) (string, error) {
 // Returns only the statements that we actually need to write.
 // This allows us to send less traffic to rekor, which means we throttle less.
 func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflict string) ([]*types.Statement, error) {
-	if conflict == "APPEND" {
+	if conflict == Append {
 		return statements, nil
 	}
 
@@ -265,12 +265,12 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 			continue
 		}
 
-		if conflict == "REPLACE" {
+		if conflict == Replace {
 			needed[stmt.Type] = struct{}{}
 			continue
 		}
 
-		if conflict != "SKIPSAME" {
+		if conflict != SkipSame {
 			return nil, fmt.Errorf("unexpected value for 'conflict': %q", conflict)
 		}
 

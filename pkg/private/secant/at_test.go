@@ -47,37 +47,37 @@ func TestNewStatements(t *testing.T) {
 	}{{
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   []*sigment{},
-		conflict:   "APPEND",
+		conflict:   Append,
 		want:       3,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   sigments(sbom, sbom2, prov),
-		conflict:   "APPEND",
+		conflict:   Append,
 		want:       3,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   []*sigment{},
-		conflict:   "REPLACE",
+		conflict:   Replace,
 		err:        true,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
 		sigments:   sigments(sbom, sbom2, prov),
-		conflict:   "REPLACE",
+		conflict:   Replace,
 		want:       2,
 	}, {
 		statements: []*types.Statement{sbom, sbom2, prov},
 		sigments:   []*sigment{},
-		conflict:   "SKIPSAME",
+		conflict:   SkipSame,
 		err:        true,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
 		sigments:   sigments(sbom, sbom2, prov),
-		conflict:   "SKIPSAME",
+		conflict:   SkipSame,
 		want:       1,
 	}, {
 		statements: []*types.Statement{sbom2, prov},
 		sigments:   sigments(sbom2, prov),
-		conflict:   "SKIPSAME",
+		conflict:   SkipSame,
 		want:       0,
 	}} {
 		t.Run(fmt.Sprintf("newStatements[%d]", i), func(t *testing.T) {
