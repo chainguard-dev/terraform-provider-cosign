@@ -9,6 +9,15 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/oci"
 )
 
+const (
+	// Replace replaces signatures on the image
+	Replace = "REPLACE"
+	// SkipSame skips writing identical signatures but otherwise replaces signatures on the image.
+	SkipSame = "SKIPSAME"
+	// Append appends signatures on the image.
+	Append = "APPEND"
+)
+
 func replacePredicate(predicateType string) *ro {
 	return &ro{predicateType: predicateType}
 }
