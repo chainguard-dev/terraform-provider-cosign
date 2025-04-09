@@ -4,65 +4,30 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/sigstore/cosign/v2/pkg/oci"
+	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 )
 
-const (
+var (
 	// Replace replaces signatures on the image
-	Replace = "REPLACE"
+	Replace = &ReplaceOp{}
 	// SkipSame skips writing identical signatures but otherwise replaces signatures on the image.
-	SkipSame = "SKIPSAME"
+	SkipSame = &ReplaceOp{SkipSame: true}
 	// Append appends signatures on the image.
-	Append = "APPEND"
+	Append = &AppendOp{}
 )
 
-func replacePredicate(predicateType string) *ro {
-	return &ro{predicateType: predicateType}
+// AppendOp adds signatures onto an image without modifying the existing signatures.
+type AppendOp struct{}
+
+// ReplaceOp replaces signatures on the image.
+type ReplaceOp struct {
+	// SkipSame controls whether equivalent signatures are written onto the image (when false) or skipped (when true)
+	SkipSame bool
 }
 
-type ro struct {
-	predicateType string
-}
-
-func (r *ro) Replace(signatures oci.Signatures, o oci.Signature) (oci.Signatures, error) {
-	sigs, err := signatures.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	ros := &replaceOCISignatures{Signatures: signatures}
-
-	sigsCopy := make([]oci.Signature, 0, len(sigs))
-	sigsCopy = append(sigsCopy, o)
-
-	if len(sigs) == 0 {
-		ros.sigs = append(ros.sigs, sigsCopy...)
-		return ros, nil
-	}
-
-	for _, s := range sigs {
-		pt, err := getPredicateType(s)
-		if err != nil {
-			return nil, err
-		}
-
-		if r.predicateType == pt {
-			fmt.Fprintln(os.Stderr, "Replacing attestation predicate:", r.predicateType)
-			continue
-		}
-
-		fmt.Fprintln(os.Stderr, "Not replacing attestation predicate:", pt)
-		sigsCopy = append(sigsCopy, s)
-	}
-
-	ros.sigs = append(ros.sigs, sigsCopy...)
-
-	return ros, nil
-}
-
-func getPredicateType(s sigsubset) (string, error) {
+func getPredicateType(s oci.Signature) (string, error) {
 	anns, err := s.Annotations()
 	if err != nil {
 		return "", fmt.Errorf("could not get annotations: %w", err)
@@ -116,4 +81,30 @@ type replaceOCISignatures struct {
 
 func (r *replaceOCISignatures) Get() ([]oci.Signature, error) {
 	return r.sigs, nil
+}
+
+type replaceSignedEntityAttestations struct {
+	oci.SignedEntity
+	atts []oci.Signature
+}
+
+func (r *replaceSignedEntityAttestations) Attestations() (oci.Signatures, error) {
+	atts, err := r.SignedEntity.Attestations()
+	if err != nil {
+		return nil, err
+	}
+	return mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.atts})
+}
+
+type replaceSignedEntitySignatures struct {
+	oci.SignedEntity
+	sigs []oci.Signature
+}
+
+func (r *replaceSignedEntitySignatures) Signatures() (oci.Signatures, error) {
+	atts, err := r.SignedEntity.Signatures()
+	if err != nil {
+		return nil, err
+	}
+	return mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.sigs})
 }

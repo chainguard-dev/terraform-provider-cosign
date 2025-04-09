@@ -348,7 +348,12 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.ropts); err != nil {
+	op, err := toConflictOp(arm.Conflict.ValueString())
+	if err != nil {
+		return "", nil, err
+	}
+
+	if err := secant.Attest(ctx, op, statements, sv, rekorClient, r.popts.ropts); err != nil {
 		return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 	}
 
