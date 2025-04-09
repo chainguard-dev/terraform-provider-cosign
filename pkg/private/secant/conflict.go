@@ -93,11 +93,7 @@ func (r *replaceSignedEntityAttestations) Attestations() (oci.Signatures, error)
 	if err != nil {
 		return nil, err
 	}
-	replaced, err := mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.atts})
-	if err != nil {
-		return nil, err
-	}
-	return replaced, err
+	return mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.atts})
 }
 
 type replaceSignedEntitySignatures struct {
@@ -110,9 +106,5 @@ func (r *replaceSignedEntitySignatures) Signatures() (oci.Signatures, error) {
 	if err != nil {
 		return nil, err
 	}
-	replaced, err := mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.sigs})
-	if err != nil {
-		return nil, err
-	}
-	return replaced, err
+	return mutate.ReplaceSignatures(&replaceOCISignatures{Signatures: atts, sigs: r.sigs})
 }
