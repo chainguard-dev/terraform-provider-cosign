@@ -19,6 +19,7 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/cosign/attestation"
 	"github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
+	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
@@ -57,46 +58,40 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 	}, nil
 }
 
-// Attest is roughly equivalent to cosign attest.
-// The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
-func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
+// AttestEntity is roughly equivalent to cosign attest.
+// It operates on the provided oci.SignedEntity without interacting with the registry.
+func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor) (oci.SignedEntity, error) {
 	digest := statements[0].Digest
-
-	// We don't actually need to access the remote entity to attach things to it
-	// so we use a placeholder here.
-	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
-	se := ociremote.SignedUnknown(digest, ropts...)
-
 	atts, err := se.Attestations()
 	if err != nil {
-		return fmt.Errorf("fetching attestations: %w", err)
+		return nil, fmt.Errorf("fetching attestations: %w", err)
 	}
 
 	sigs, err := atts.Get()
 	if err != nil {
-		return fmt.Errorf("getting attestations: %w", err)
+		return nil, fmt.Errorf("getting attestations: %w", err)
 	}
 
 	statements, err = newStatements(statements, sigs, conflict)
 	if err != nil {
-		return fmt.Errorf("failed to determine new statements: %w", err)
+		return nil, fmt.Errorf("failed to determine new statements: %w", err)
 	}
 
 	// If there are no net new statements, we can skip the write entirely.
 	if len(statements) == 0 {
-		return nil
+		return se, nil
 	}
 
 	for _, statement := range statements {
 		// Make sure these statements are all for the same subject.
 		if digest != statement.Digest {
-			return fmt.Errorf("mismatched attestations: %s != %s", digest.String(), statement.Digest.String())
+			return nil, fmt.Errorf("mismatched attestations: %s != %s", digest.String(), statement.Digest.String())
 		}
 
 		pae := dsse.PAE(ctypes.IntotoPayloadType, statement.Payload)
 		signed, err := sv.SignMessage(bytes.NewReader(pae), options.WithContext(ctx))
 		if err != nil {
-			return fmt.Errorf("signing pae: %w", err)
+			return nil, fmt.Errorf("signing pae: %w", err)
 		}
 
 		env := dsse.Envelope{
@@ -111,50 +106,50 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 
 		envelope, err := json.Marshal(env)
 		if err != nil {
-			return fmt.Errorf("marshaling envelope: %w", err)
+			return nil, fmt.Errorf("marshaling envelope: %w", err)
 		}
 
 		// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
 		sig, err := sv.Cosign(ctx, bytes.NewReader(envelope))
 		if err != nil {
-			return fmt.Errorf("signing envelope: %w", err)
+			return nil, fmt.Errorf("signing envelope: %w", err)
 		}
 
 		cert, err := sig.Cert()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		rawCert, err := cryptoutils.MarshalCertificateToPEM(cert)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		chain, err := sig.Chain()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		rawChain, err := cryptoutils.MarshalCertificatesToPEM(chain)
 		if err != nil {
-			return fmt.Errorf("marshaling chain: %w", err)
+			return nil, fmt.Errorf("marshaling chain: %w", err)
 		}
 
 		e, err := intoto.Entry(ctx, envelope, rawCert)
 		if err != nil {
-			return fmt.Errorf("creating intoto entry: %w", err)
+			return nil, fmt.Errorf("creating intoto entry: %w", err)
 		}
 
 		entry, err := tlog.Upload(ctx, rekorClient, e)
 		if err != nil {
-			return fmt.Errorf("uploading to rekor: %w", err)
+			return nil, fmt.Errorf("uploading to rekor: %w", err)
 		}
 
 		bundle := cbundle.EntryToBundle(entry)
 
 		predicateType, err := parsePredicateType(statement.Type)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		opts := []static.Option{
@@ -168,7 +163,7 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 
 		att, err := static.NewAttestation(envelope, opts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		signOpts := []mutate.SignOption{}
@@ -179,8 +174,25 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 		// Attach the attestation to the entity.
 		se, err = mutate.AttachAttestationToEntity(se, att, signOpts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
+	}
+	return se, nil
+}
+
+// Attest is roughly equivalent to cosign attest.
+// The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
+func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
+	digest := statements[0].Digest
+
+	// We don't actually need to access the remote entity to attach things to it
+	// so we use a placeholder here.
+	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+	se := ociremote.SignedUnknown(digest, ropts...)
+
+	se, err := AttestEntity(ctx, se, conflict, statements, sv, rekorClient)
+	if err != nil {
+		return fmt.Errorf("attesting: %w", err)
 	}
 
 	// Publish the attestations associated with this entity
