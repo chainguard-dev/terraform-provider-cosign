@@ -77,7 +77,7 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		return nil, fmt.Errorf("failed to determine new statements: %w", err)
 	}
 
-	// If there are no net new statements, we can skip the write entirely.
+	// If there are no net new statements, we can return the original SignedEntity directly.
 	if len(statements) == 0 {
 		return se, nil
 	}
@@ -190,13 +190,17 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	se := ociremote.SignedUnknown(digest, ropts...)
 
-	se, err := AttestEntity(ctx, se, conflict, statements, sv, rekorClient)
+	newSE, err := AttestEntity(ctx, se, conflict, statements, sv, rekorClient)
 	if err != nil {
 		return fmt.Errorf("attesting: %w", err)
 	}
 
+	// If the signed entity hasn't changed, we can skip the write entirely
+	if se == newSE {
+		return nil
+	}
 	// Publish the attestations associated with this entity
-	return ociremote.WriteAttestations(digest.Repository, se, ropts...)
+	return ociremote.WriteAttestations(digest.Repository, newSE, ropts...)
 }
 
 var predicateTypeMap = map[string]string{
