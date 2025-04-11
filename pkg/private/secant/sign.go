@@ -19,11 +19,9 @@ import (
 	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
 )
 
-// Sign is roughly equivalent to cosign sign.
-func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
-	cs := rekor.NewCosigner(sv, rekorClient)
-
-	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+// SignEntity is roughly equivalent to cosign sign.
+// It operates on the provided oci.SignedEntity without interacting with the registry.
+func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]interface{}, cs types.Cosigner) (oci.SignedEntity, error) {
 	signOpts := []mutate.SignOption{}
 	switch conflict {
 	case Append:
@@ -34,8 +32,37 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 		signOpts = append(signOpts, mutate.WithDupeDetector(skipSameSignatures{}))
 	default:
 		// This should not happen because schema validation would catch it.
-		return fmt.Errorf("unhandled conflict type: %q", conflict)
+		return nil, fmt.Errorf("unhandled conflict type: %q", conflict)
 	}
+	// Get the digest for this entity in our walk.
+	d, err := se.(interface{ Digest() (v1.Hash, error) }).Digest()
+	if err != nil {
+		return nil, fmt.Errorf("computing digest: %w", err)
+	}
+	digest := subject.Context().Digest(d.String())
+
+	payload, err := (&sigPayload.Cosign{
+		Image:       digest,
+		Annotations: annotations,
+	}).MarshalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("payload: %w", err)
+	}
+
+	ociSig, err := cs.Cosign(ctx, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	// Attach the signature to the entity.
+	return mutate.AttachSignatureToEntity(se, ociSig, signOpts...)
+}
+
+// Sign is roughly equivalent to cosign sign.
+func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
+	cs := rekor.NewCosigner(sv, rekorClient)
+
+	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, ref := range imgs {
 		se, err := ociremote.SignedEntity(ref, opts...)
@@ -50,40 +77,18 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 				return fmt.Errorf("computing digest: %w", err)
 			}
 			digest := ref.Context().Digest(d.String())
-			if err := signDigest(ctx, digest, annotations, signOpts, cs, se, opts); err != nil {
+			newSE, err := SignEntity(ctx, se, digest, conflict, annotations, cs)
+			if err != nil {
 				return fmt.Errorf("signing digest: %w", err)
 			}
-			return nil
+			// Publish the signatures associated with this entity
+			return ociremote.WriteSignatures(digest.Repository, newSE, opts...)
 		}); err != nil {
 			return fmt.Errorf("recursively signing: %w", err)
 		}
 	}
 
 	return nil
-}
-
-func signDigest(ctx context.Context, digest name.Digest, annotations map[string]interface{}, signOpts []mutate.SignOption, cs types.Cosigner, se oci.SignedEntity, opts []ociremote.Option) error {
-	payload, err := (&sigPayload.Cosign{
-		Image:       digest,
-		Annotations: annotations,
-	}).MarshalJSON()
-	if err != nil {
-		return fmt.Errorf("payload: %w", err)
-	}
-
-	ociSig, err := cs.Cosign(ctx, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-
-	// Attach the signature to the entity.
-	newSE, err := mutate.AttachSignatureToEntity(se, ociSig, signOpts...)
-	if err != nil {
-		return err
-	}
-
-	// Publish the signatures associated with this entity
-	return ociremote.WriteSignatures(digest.Repository, newSE, opts...)
 }
 
 type replaceSignatures struct{}
