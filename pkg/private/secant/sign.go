@@ -21,26 +21,13 @@ import (
 
 // SignEntity is roughly equivalent to cosign sign.
 // It operates on the provided oci.SignedEntity without interacting with the registry.
-func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]interface{}, cs types.Cosigner) (oci.SignedEntity, error) {
-	signOpts := []mutate.SignOption{}
-	switch conflict {
-	case Append:
-		// Don't add any options. Without replace op or dupe detector, we will append.
-	case Replace:
-		signOpts = append(signOpts, mutate.WithReplaceOp(replaceSignatures{}))
-	case SkipSame:
-		signOpts = append(signOpts, mutate.WithDupeDetector(skipSameSignatures{}))
-	default:
-		// This should not happen because schema validation would catch it.
-		return nil, fmt.Errorf("unhandled conflict type: %q", conflict)
-	}
+func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]interface{}, cs types.Cosigner, rekorClient *client.Rekor) (oci.SignedEntity, error) {
 	// Get the digest for this entity in our walk.
 	d, err := se.(interface{ Digest() (v1.Hash, error) }).Digest()
 	if err != nil {
 		return nil, fmt.Errorf("computing digest: %w", err)
 	}
 	digest := subject.Context().Digest(d.String())
-
 	payload, err := (&sigPayload.Cosign{
 		Image:       digest,
 		Annotations: annotations,
@@ -54,14 +41,42 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 		return nil, err
 	}
 
+	currentSigs, err := se.Signatures()
+	if err != nil {
+		return nil, fmt.Errorf("getting current signatures: %w", err)
+	}
+	signOpts := []mutate.SignOption{}
+	switch conflict {
+	case Append:
+		// Don't add any options. Without replace op or dupe detector, we will append.
+	case Replace:
+		signOpts = append(signOpts, mutate.WithReplaceOp(replaceSignatures{}))
+	case SkipSame:
+		// We intentionally avoid mutate.WithDupeDetector so that we can skip uploading
+		// anything to rekor in case of a duplicate.
+		match, err := skipSameSignatures{}.Find(currentSigs, ociSig)
+		if err != nil {
+			return nil, fmt.Errorf("finding matching signatures: %w", err)
+		}
+		if match != nil {
+			return se, nil
+		}
+	default:
+		// This should not happen because schema validation would catch it.
+		return nil, fmt.Errorf("unhandled conflict type: %q", conflict)
+	}
+
+	ociSig, err = rekor.AttachHashedRekord(ctx, rekorClient, ociSig)
+	if err != nil {
+		return nil, fmt.Errorf("attaching rekor bundle: %w", err)
+	}
+
 	// Attach the signature to the entity.
 	return mutate.AttachSignatureToEntity(se, ociSig, signOpts...)
 }
 
 // Sign is roughly equivalent to cosign sign.
 func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
-	cs := rekor.NewCosigner(sv, rekorClient)
-
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, ref := range imgs {
@@ -77,7 +92,7 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 				return fmt.Errorf("computing digest: %w", err)
 			}
 			digest := ref.Context().Digest(d.String())
-			newSE, err := SignEntity(ctx, se, digest, conflict, annotations, cs)
+			newSE, err := SignEntity(ctx, se, digest, conflict, annotations, sv, rekorClient)
 			if err != nil {
 				return fmt.Errorf("signing digest: %w", err)
 			}

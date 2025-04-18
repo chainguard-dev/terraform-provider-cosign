@@ -17,11 +17,9 @@ package rekor
 import (
 	"context"
 	"crypto/sha256"
-	"io"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/rekord"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
-	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
@@ -30,22 +28,8 @@ import (
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 )
 
-// signerWrapper calls a wrapped, inner signer then uploads either the Cert or Pub(licKey) of the results to Rekor, then adds the resulting `Bundle`
-type signerWrapper struct {
-	inner types.Cosigner
-
-	client *client.Rekor
-}
-
-var _ types.Cosigner = (*signerWrapper)(nil)
-
-// Cosign implements Cosigner.
-func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, error) {
-	sig, err := rs.inner.Cosign(ctx, payload)
-	if err != nil {
-		return nil, err
-	}
-
+// AttachHashedRekord uploads information about the signature to Rekor and attaches a Rekor bundle to the signature.
+func AttachHashedRekord(ctx context.Context, rekorClient *client.Rekor, sig oci.Signature) (oci.Signature, error) {
 	payloadBytes, err := sig.Payload()
 	if err != nil {
 		return nil, err
@@ -73,28 +57,11 @@ func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Sig
 
 	pe := rekord.Entry(checkSum, sigBytes, rekorBytes)
 
-	entry, err := tlog.Upload(ctx, rs.client, pe)
+	entry, err := tlog.Upload(ctx, rekorClient, pe)
 	if err != nil {
 		return nil, err
 	}
 
-	bundle, err := cbundle.EntryToBundle(entry), nil
-	if err != nil {
-		return nil, err
-	}
-
-	newSig, err := mutate.Signature(sig, mutate.WithBundle(bundle))
-	if err != nil {
-		return nil, err
-	}
-
-	return newSig, nil
-}
-
-// NewCosigner returns a Cosigner which uploads the signature to Rekor
-func NewCosigner(inner types.Cosigner, client *client.Rekor) types.Cosigner {
-	return &signerWrapper{
-		inner:  inner,
-		client: client,
-	}
+	bundle := cbundle.EntryToBundle(entry)
+	return mutate.Signature(sig, mutate.WithBundle(bundle))
 }
