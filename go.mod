@@ -24,7 +24,7 @@ require (
 	github.com/sigstore/fulcio v1.6.6
 	github.com/sigstore/policy-controller v0.12.1
 	github.com/sigstore/rekor v1.3.10
-	github.com/sigstore/sigstore v1.9.3
+	github.com/sigstore/sigstore v1.9.4
 	github.com/transparency-dev/merkle v0.0.2
 	go.uber.org/ratelimit v0.3.1
 	golang.org/x/oauth2 v0.29.0
@@ -115,7 +115,7 @@ require (
 	github.com/cockroachdb/apd/v3 v3.2.1 // indirect
 	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.16.3 // indirect
-	github.com/coreos/go-oidc/v3 v3.13.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.14.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/digitorus/pkcs7 v0.0.0-20230818184609-3a137a874352 // indirect
 	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7 // indirect
