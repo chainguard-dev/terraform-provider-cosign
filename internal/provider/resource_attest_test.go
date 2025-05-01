@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-
 	"strings"
 	"testing"
 
@@ -231,19 +230,32 @@ data "cosign_verify" "bar" {
 	for _, tc := range []struct {
 		conflict  string
 		wantCount int
+		entryType string
 		noop      bool
 	}{{
 		conflict:  "APPEND",
+		entryType: "intoto",
 		wantCount: 3,
 	}, {
 		conflict:  "REPLACE",
+		entryType: "intoto",
 		wantCount: 2,
 	}, {
 		conflict:  "SKIPSAME",
+		entryType: "intoto",
 		wantCount: 2,
 		noop:      true,
+	}, {
+		conflict:  "SKIPSAME",
+		entryType: "dsse",
+		wantCount: 2,
+		noop:      true,
+	}, {
+		conflict:  "REPLACE",
+		entryType: "dsse",
+		wantCount: 2,
 	}} {
-		t.Run(tc.conflict, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s_%s", tc.conflict, tc.entryType), func(t *testing.T) {
 			// Now we also attest using the multiple predicates form.
 			// One of the predicates is the same predicateType as above.
 			// The second predicate has a new predicateType.
@@ -259,6 +271,11 @@ data "cosign_verify" "bar" {
 					// Attest and verify the first image.
 					{
 						Config: fmt.Sprintf(`
+
+provider "cosign" {
+  default_attestation_entry_type = %q
+}
+
 resource "cosign_attest" "foo" {
   image          = %q
   conflict       = %q
@@ -338,7 +355,7 @@ data "cosign_verify" "bar" {
     }
   })
 }
-`, ref1, tc.conflict, url, value, url2, tmp.Name(), hash, ref1, url, url, value, url2, url2, value),
+`, tc.entryType, ref1, tc.conflict, url, value, url2, tmp.Name(), hash, ref1, url, url, value, url2, url2, value),
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestMatchResourceAttr(
 								"cosign_attest.foo", "image", regexp.MustCompile("^"+ref1.String())),
