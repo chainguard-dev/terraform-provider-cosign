@@ -17,14 +17,20 @@ package rekor
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+	"strings"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/rekord"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
+	"github.com/go-openapi/runtime"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
-
 	"github.com/sigstore/rekor/pkg/generated/client"
+	"github.com/sigstore/rekor/pkg/generated/models"
+	rekortypes "github.com/sigstore/rekor/pkg/types"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 )
 
@@ -64,4 +70,27 @@ func AttachHashedRekord(ctx context.Context, rekorClient *client.Rekor, sig oci.
 
 	bundle := cbundle.EntryToBundle(entry)
 	return mutate.Signature(sig, mutate.WithBundle(bundle))
+}
+
+// PayloadHash extracts the payload hash from the provided rekor bundle.
+func PayloadHash(bundle *cbundle.RekorBundle) (v1.Hash, error) {
+	body, ok := bundle.Payload.Body.(string)
+	if !ok {
+		return v1.Hash{}, fmt.Errorf("bundle payload body is %T, expected string", bundle.Payload.Body)
+	}
+	dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(body))
+	pe, err := models.UnmarshalProposedEntry(dec, runtime.JSONConsumer())
+	if err != nil {
+		return v1.Hash{}, fmt.Errorf("UnmarshaslProposedEntry: %w", err)
+	}
+
+	impl, err := rekortypes.UnmarshalEntry(pe)
+	if err != nil {
+		return v1.Hash{}, fmt.Errorf("UnmarshalEntry: %w", err)
+	}
+	hash, err := impl.ArtifactHash()
+	if err != nil {
+		return v1.Hash{}, fmt.Errorf("reading artifact hash: %w", err)
+	}
+	return v1.NewHash(hash)
 }

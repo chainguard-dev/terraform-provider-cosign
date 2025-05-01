@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/rekor/pkg/generated/client"
 )
@@ -28,11 +30,13 @@ type Provider struct {
 
 // ProviderModel describes the provider data model.
 type ProviderModel struct {
+	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
 }
 
 type ProviderOpts struct {
-	ropts    []remote.Option
-	keychain authn.Keychain
+	ropts                       []remote.Option
+	keychain                    authn.Keychain
+	defaultAttestationEntryType string
 
 	oidc fulcio.OIDCProvider
 
@@ -95,7 +99,13 @@ func (p *Provider) Metadata(ctx context.Context, req provider.MetadataRequest, r
 
 func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Attributes: map[string]schema.Attribute{},
+		Attributes: map[string]schema.Attribute{
+			"default_attestation_entry_type": schema.StringAttribute{
+				MarkdownDescription: "Default Rekor entry type to use for attestations. Valid values are 'intoto' (default) or 'dsse'.",
+				Optional:            true,
+				Validators:          []validator.String{EntryTypeValidator{}},
+			},
+		},
 	}
 }
 
@@ -124,12 +134,18 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	}
 	ropts = append(ropts, remote.Reuse(puller), remote.Reuse(pusher))
 
+	attestationEntryType := "intoto"
+	if !data.DefaultAttestationEntryType.IsNull() && !data.DefaultAttestationEntryType.IsUnknown() {
+		attestationEntryType = data.DefaultAttestationEntryType.ValueString()
+	}
+
 	opts := &ProviderOpts{
-		ropts:        ropts,
-		keychain:     kc,
-		oidc:         &oidcProvider{},
-		signers:      map[string]*fulcio.SignerVerifier{},
-		rekorClients: map[string]*client.Rekor{},
+		ropts:                       ropts,
+		keychain:                    kc,
+		oidc:                        &oidcProvider{},
+		defaultAttestationEntryType: attestationEntryType,
+		signers:                     map[string]*fulcio.SignerVerifier{},
+		rekorClients:                map[string]*client.Rekor{},
 	}
 
 	// Make provider opts available to resources and data sources.
@@ -156,5 +172,32 @@ func New(version string) func() provider.Provider {
 		return &Provider{
 			version: version,
 		}
+	}
+}
+
+// EntryTypeValidator is a string validator that checks that the string is a valid Rekor entry type.
+type EntryTypeValidator struct{}
+
+var _ validator.String = EntryTypeValidator{}
+
+func (v EntryTypeValidator) Description(context.Context) string {
+	return "value must be one of (`dsse`, `intoto`)"
+}
+
+func (v EntryTypeValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v EntryTypeValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+
+	switch val {
+	case "dsse", "intoto":
+		return
+	default:
+		resp.Diagnostics.AddError("error validating default_attestation_entry_type", v.Description(ctx))
 	}
 }

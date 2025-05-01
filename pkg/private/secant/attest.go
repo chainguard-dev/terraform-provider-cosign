@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/url"
 
+	rekordsse "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/dsse"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/intoto"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -25,8 +27,14 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
 	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 	"github.com/sigstore/rekor/pkg/generated/client"
+	"github.com/sigstore/rekor/pkg/generated/models"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature/options"
+)
+
+var (
+	dsseType   = "dsse"
+	intotoType = "intoto"
 )
 
 // NewStatement generates a statement for use in Attest.
@@ -60,7 +68,11 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 
 // AttestEntity is roughly equivalent to cosign attest.
 // It operates on the provided oci.SignedEntity without interacting with the registry.
-func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor) (oci.SignedEntity, error) {
+func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, opts ...AttestOption) (oci.SignedEntity, error) {
+	attestOpts, err := makeAttestOptions(opts)
+	if err != nil {
+		return nil, fmt.Errorf("initializing attest options: %w", err)
+	}
 	digest := statements[0].Digest
 	atts, err := se.Attestations()
 	if err != nil {
@@ -135,11 +147,21 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 			return nil, fmt.Errorf("marshaling chain: %w", err)
 		}
 
-		e, err := intoto.Entry(ctx, envelope, rawCert)
-		if err != nil {
-			return nil, fmt.Errorf("creating intoto entry: %w", err)
+		var e models.ProposedEntry
+		switch attestOpts.rekorEntryType {
+		case intotoType:
+			e, err = intoto.Entry(ctx, envelope, rawCert)
+			if err != nil {
+				return nil, fmt.Errorf("creating intoto entry: %w", err)
+			}
+		case dsseType:
+			e, err = rekordsse.Entry(ctx, envelope, rawCert)
+			if err != nil {
+				return nil, fmt.Errorf("creating dsse entry: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("invalid rekor entry type: %q", attestOpts.rekorEntryType)
 		}
-
 		entry, err := tlog.Upload(ctx, rekorClient, e)
 		if err != nil {
 			return nil, fmt.Errorf("uploading to rekor: %w", err)
@@ -182,7 +204,7 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 
 // Attest is roughly equivalent to cosign attest.
 // The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
-func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
+func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option, opts ...AttestOption) error {
 	digest := statements[0].Digest
 
 	// We don't actually need to access the remote entity to attach things to it
@@ -190,7 +212,7 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	se := ociremote.SignedUnknown(digest, ropts...)
 
-	newSE, err := AttestEntity(ctx, se, conflict, statements, sv, rekorClient)
+	newSE, err := AttestEntity(ctx, se, conflict, statements, sv, rekorClient, opts...)
 	if err != nil {
 		return fmt.Errorf("attesting: %w", err)
 	}
@@ -303,7 +325,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 			return nil, fmt.Errorf("getting sig bundle: %w", err)
 		}
 
-		payloadHash, err := intoto.PayloadHash(bundle)
+		payloadHash, err := rekor.PayloadHash(bundle)
 		if err != nil {
 			// If we hit this error, it means we are attesting something with an unexpected payload format.
 			// We may want to surface a warning and overwrite it because it probably means we switched payload formats.
@@ -313,7 +335,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 		}
 
 		// The new statement is different from the existing one, so we need to replace it.
-		if newHash != *payloadHash {
+		if newHash != payloadHash {
 			needed[stmt.Type] = struct{}{}
 		}
 	}
@@ -327,6 +349,35 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 	}
 
 	return result, nil
+}
+
+type attestOptions struct {
+	rekorEntryType string
+}
+
+type AttestOption (func(*attestOptions) error)
+
+func makeAttestOptions(opts []AttestOption) (*attestOptions, error) {
+	o := &attestOptions{
+		rekorEntryType: dsseType,
+	}
+	for _, opt := range opts {
+		if err := opt(o); err != nil {
+			return nil, err
+		}
+	}
+	return o, nil
+}
+
+// WithRekorEntryType overrides the entry type that is uploaded to Rekor.
+func WithRekorEntryType(t string) AttestOption {
+	return func(o *attestOptions) error {
+		if t != dsseType && t != intotoType {
+			return fmt.Errorf("invalid rekor entry type %q", t)
+		}
+		o.rekorEntryType = t
+		return nil
+	}
 }
 
 // A subset of oci.Signature that we use so we can test this more easily.
