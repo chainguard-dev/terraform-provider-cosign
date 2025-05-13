@@ -30,12 +30,17 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/models"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature/options"
+	"golang.org/x/time/rate"
 )
 
 var (
 	dsseType   = "dsse"
 	intotoType = "intoto"
 )
+
+// A little bird told me that rekor allows 500 requests per minute.
+// We want to stay well under that, so we'll round down to 5 QPS.
+var defaultRekorLimiter = rate.NewLimiter(5.0, 50)
 
 // NewStatement generates a statement for use in Attest.
 func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types.Statement, error) {
@@ -94,6 +99,13 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		return se, nil
 	}
 
+	if attestOpts.rekorLimiter != nil {
+		// Wait to ensure we don't hit Rekor rate limits.
+		// Wait up front for enough tokens to attest all statements to reduce likelihood of partial failure due to context cancellation.
+		if err := defaultRekorLimiter.WaitN(ctx, len(statements)); err != nil {
+			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
+		}
+	}
 	for _, statement := range statements {
 		// Make sure these statements are all for the same subject.
 		if digest != statement.Digest {
@@ -353,6 +365,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 
 type attestOptions struct {
 	rekorEntryType string
+	rekorLimiter   *rate.Limiter
 }
 
 type AttestOption (func(*attestOptions) error)
@@ -360,6 +373,7 @@ type AttestOption (func(*attestOptions) error)
 func makeAttestOptions(opts []AttestOption) (*attestOptions, error) {
 	o := &attestOptions{
 		rekorEntryType: dsseType,
+		rekorLimiter:   defaultRekorLimiter,
 	}
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
@@ -376,6 +390,14 @@ func WithRekorEntryType(t string) AttestOption {
 			return fmt.Errorf("invalid rekor entry type %q", t)
 		}
 		o.rekorEntryType = t
+		return nil
+	}
+}
+
+// WithAttestRekorLimiter rate limits calls to Rekor
+func WithAttestRekorLimiter(limiter *rate.Limiter) AttestOption {
+	return func(o *attestOptions) error {
+		o.rekorLimiter = limiter
 		return nil
 	}
 }
