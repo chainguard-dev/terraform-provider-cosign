@@ -17,6 +17,7 @@ package client
 import (
 	"net/http"
 
+	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hashicorp/go-retryablehttp"
 	"go.uber.org/ratelimit"
 )
@@ -28,6 +29,7 @@ type options struct {
 	UserAgent  string
 	RetryCount uint
 	Logger     interface{}
+	transport  http.RoundTripper
 
 	// Client-side rate limiting to avoid rekor 429s.
 	// This is the only real difference from upstream.
@@ -44,6 +46,9 @@ func makeOptions(opts ...Option) *options {
 	o := &options{
 		UserAgent:  "",
 		RetryCount: DefaultRetryCount,
+		// Another difference from upstream is that we want a DefaultPooledTransport
+		// because we have a single client per host.
+		transport: cleanhttp.DefaultPooledTransport(),
 		// A little bird told me that rekor allows 500 requests per minute.
 		// We want to stay well under that, so we'll round down to 5 QPS.
 		limiter: ratelimit.New(5, ratelimit.WithoutSlack),
@@ -67,6 +72,13 @@ func WithUserAgent(userAgent string) Option {
 func WithRetryCount(retryCount uint) Option {
 	return func(o *options) {
 		o.RetryCount = retryCount
+	}
+}
+
+// WithTransport ssets the transport to use for HTTP requests.
+func WithTransport(transport http.RoundTripper) Option {
+	return func(o *options) {
+		o.transport = transport
 	}
 }
 
@@ -96,12 +108,9 @@ func (rt *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return rt.RoundTripper.RoundTrip(req)
 }
 
-func createRoundTripper(inner http.RoundTripper, o *options) http.RoundTripper {
-	if inner == nil {
-		inner = http.DefaultTransport
-	}
+func createRoundTripper(o *options) http.RoundTripper {
 	return &roundTripper{
-		RoundTripper: inner,
+		RoundTripper: o.transport,
 		UserAgent:    o.UserAgent,
 		limiter:      o.limiter,
 	}
