@@ -21,7 +21,6 @@ import (
 	"github.com/go-openapi/runtime"
 	httptransport "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-	"github.com/hashicorp/go-cleanhttp"
 	retryablehttp "github.com/hashicorp/go-retryablehttp"
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/rekor/pkg/util"
@@ -36,9 +35,7 @@ func GetRekorClient(rekorServerURL string, opts ...Option) (*client.Rekor, error
 
 	retryableClient := retryablehttp.NewClient()
 
-	// Another difference from upstream is that we want a DefaultPooledTransport
-	// because we have a single client per host.
-	defaultTransport := createRoundTripper(cleanhttp.DefaultPooledTransport(), o)
+	defaultTransport := createRoundTripper(o)
 	retryableClient.HTTPClient = &http.Client{
 		Transport: defaultTransport,
 	}
