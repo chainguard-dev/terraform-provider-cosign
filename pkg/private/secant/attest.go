@@ -30,12 +30,17 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/models"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature/options"
+	"golang.org/x/time/rate"
 )
 
 var (
 	dsseType   = "dsse"
 	intotoType = "intoto"
 )
+
+// RekorRateLimiter is used to throttle calls to Rekor when signing or attesting images in order to stay within the rate limits.
+// Defaults to a 5 QPS limit.
+var RekorRateLimiter = rate.NewLimiter(5.0, 50)
 
 // NewStatement generates a statement for use in Attest.
 func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types.Statement, error) {
@@ -94,6 +99,13 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		return se, nil
 	}
 
+	if RekorRateLimiter != nil {
+		// Wait to ensure we don't hit Rekor rate limits.
+		// Wait up front for enough tokens to attest all statements to reduce likelihood of partial failure due to context cancellation.
+		if err := RekorRateLimiter.WaitN(ctx, len(statements)); err != nil {
+			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
+		}
+	}
 	for _, statement := range statements {
 		// Make sure these statements are all for the same subject.
 		if digest != statement.Digest {

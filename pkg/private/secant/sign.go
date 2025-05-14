@@ -66,6 +66,11 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 		return nil, fmt.Errorf("unhandled conflict type: %q", conflict)
 	}
 
+	if RekorRateLimiter != nil {
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
+		}
+	}
 	ociSig, err = rekor.AttachHashedRekord(ctx, rekorClient, ociSig)
 	if err != nil {
 		return nil, fmt.Errorf("attaching rekor bundle: %w", err)
