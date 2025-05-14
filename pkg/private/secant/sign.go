@@ -17,16 +17,11 @@ import (
 	"github.com/sigstore/cosign/v2/pkg/oci/walk"
 	"github.com/sigstore/rekor/pkg/generated/client"
 	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
-	"golang.org/x/time/rate"
 )
 
 // SignEntity is roughly equivalent to cosign sign.
 // It operates on the provided oci.SignedEntity without interacting with the registry.
-func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]interface{}, cs types.Cosigner, rekorClient *client.Rekor, opts ...SignOption) (oci.SignedEntity, error) {
-	o, err := makeSignOptions(opts)
-	if err != nil {
-		return nil, fmt.Errorf("initializing sign options: %w", err)
-	}
+func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]interface{}, cs types.Cosigner, rekorClient *client.Rekor) (oci.SignedEntity, error) {
 	// Get the digest for this entity in our walk.
 	d, err := se.(interface{ Digest() (v1.Hash, error) }).Digest()
 	if err != nil {
@@ -71,8 +66,8 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 		return nil, fmt.Errorf("unhandled conflict type: %q", conflict)
 	}
 
-	if o.rekorLimiter != nil {
-		if err := o.rekorLimiter.Wait(ctx); err != nil {
+	if RekorRateLimiter != nil {
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
@@ -86,11 +81,11 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 }
 
 // Sign is roughly equivalent to cosign sign.
-func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option, opts ...SignOption) error {
-	rOpts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
+	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, ref := range imgs {
-		se, err := ociremote.SignedEntity(ref, rOpts...)
+		se, err := ociremote.SignedEntity(ref, opts...)
 		if err != nil {
 			return fmt.Errorf("accessing entity: %w", err)
 		}
@@ -102,12 +97,12 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 				return fmt.Errorf("computing digest: %w", err)
 			}
 			digest := ref.Context().Digest(d.String())
-			newSE, err := SignEntity(ctx, se, digest, conflict, annotations, sv, rekorClient, opts...)
+			newSE, err := SignEntity(ctx, se, digest, conflict, annotations, sv, rekorClient)
 			if err != nil {
 				return fmt.Errorf("signing digest: %w", err)
 			}
 			// Publish the signatures associated with this entity
-			return ociremote.WriteSignatures(digest.Repository, newSE, rOpts...)
+			return ociremote.WriteSignatures(digest.Repository, newSE, opts...)
 		}); err != nil {
 			return fmt.Errorf("recursively signing: %w", err)
 		}
@@ -184,30 +179,4 @@ func (r skipSameSignatures) Find(signatures oci.Signatures, o oci.Signature) (oc
 	}
 
 	return nil, nil
-}
-
-type signOptions struct {
-	rekorLimiter *rate.Limiter
-}
-
-type SignOption (func(*signOptions) error)
-
-func makeSignOptions(opts []SignOption) (*signOptions, error) {
-	o := &signOptions{
-		rekorLimiter: defaultRekorLimiter,
-	}
-	for _, opt := range opts {
-		if err := opt(o); err != nil {
-			return nil, err
-		}
-	}
-	return o, nil
-}
-
-// WithSignRekorLimiter rate limits calls to Rekor
-func WithSignRekorLimiter(limiter *rate.Limiter) AttestOption {
-	return func(o *attestOptions) error {
-		o.rekorLimiter = limiter
-		return nil
-	}
 }

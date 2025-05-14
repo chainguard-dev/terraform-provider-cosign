@@ -38,9 +38,9 @@ var (
 	intotoType = "intoto"
 )
 
-// A little bird told me that rekor allows 500 requests per minute.
-// We want to stay well under that, so we'll round down to 5 QPS.
-var defaultRekorLimiter = rate.NewLimiter(5.0, 50)
+// RekorRateLimiter is used to throttle calls to Rekor when signing or attesting images in order to stay within the rate limits.
+// Defaults to a 5 QPS limit.
+var RekorRateLimiter = rate.NewLimiter(5.0, 50)
 
 // NewStatement generates a statement for use in Attest.
 func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types.Statement, error) {
@@ -99,10 +99,10 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		return se, nil
 	}
 
-	if attestOpts.rekorLimiter != nil {
+	if RekorRateLimiter != nil {
 		// Wait to ensure we don't hit Rekor rate limits.
 		// Wait up front for enough tokens to attest all statements to reduce likelihood of partial failure due to context cancellation.
-		if err := defaultRekorLimiter.WaitN(ctx, len(statements)); err != nil {
+		if err := RekorRateLimiter.WaitN(ctx, len(statements)); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
@@ -365,7 +365,6 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 
 type attestOptions struct {
 	rekorEntryType string
-	rekorLimiter   *rate.Limiter
 }
 
 type AttestOption (func(*attestOptions) error)
@@ -373,7 +372,6 @@ type AttestOption (func(*attestOptions) error)
 func makeAttestOptions(opts []AttestOption) (*attestOptions, error) {
 	o := &attestOptions{
 		rekorEntryType: dsseType,
-		rekorLimiter:   defaultRekorLimiter,
 	}
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
@@ -390,14 +388,6 @@ func WithRekorEntryType(t string) AttestOption {
 			return fmt.Errorf("invalid rekor entry type %q", t)
 		}
 		o.rekorEntryType = t
-		return nil
-	}
-}
-
-// WithAttestRekorLimiter rate limits calls to Rekor
-func WithAttestRekorLimiter(limiter *rate.Limiter) AttestOption {
-	return func(o *attestOptions) error {
-		o.rekorLimiter = limiter
 		return nil
 	}
 }
