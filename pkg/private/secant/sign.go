@@ -35,12 +35,6 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 	if err != nil {
 		return nil, fmt.Errorf("payload: %w", err)
 	}
-
-	ociSig, err := cs.Cosign(ctx, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-
 	currentSigs, err := se.Signatures()
 	if err != nil {
 		return nil, fmt.Errorf("getting current signatures: %w", err)
@@ -54,7 +48,7 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 	case SkipSame:
 		// We intentionally avoid mutate.WithDupeDetector so that we can skip uploading
 		// anything to rekor in case of a duplicate.
-		match, err := skipSameSignatures{}.Find(currentSigs, ociSig)
+		match, err := findMatchingSignature(currentSigs, payload)
 		if err != nil {
 			return nil, fmt.Errorf("finding matching signatures: %w", err)
 		}
@@ -66,11 +60,19 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 		return nil, fmt.Errorf("unhandled conflict type: %q", conflict)
 	}
 
+	// We intentionally throttle after we've evaluated SKIP_SAME (so we don't throttle if we're not going to call Rekor)
+	// and before signing the payload (to ensure our signature is valid when uploading to Rekor)
 	if RekorRateLimiter != nil {
 		if err := RekorRateLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
+
+	ociSig, err := cs.Cosign(ctx, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+
 	ociSig, err = rekor.AttachHashedRekord(ctx, rekorClient, ociSig)
 	if err != nil {
 		return nil, fmt.Errorf("attaching rekor bundle: %w", err)
@@ -154,17 +156,15 @@ func (r replaceSignatures) Replace(signatures oci.Signatures, o oci.Signature) (
 	return ros, nil
 }
 
-type skipSameSignatures struct{}
-
-func (r skipSameSignatures) Find(signatures oci.Signatures, o oci.Signature) (oci.Signature, error) {
+func findMatchingSignature(signatures oci.Signatures, payload []byte) (oci.Signature, error) {
 	sigs, err := signatures.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	digest, err := o.Digest()
+	digest, _, err := v1.SHA256(bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("calculating digest of payload: %w", err)
 	}
 
 	for _, s := range sigs {
