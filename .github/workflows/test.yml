@@ -76,11 +76,11 @@ jobs:
 
       - name: Handle conclusion
         env:
-          WORKFLOW_CONCLUSION: ${{ env.WORKFLOW_CONCLUSION }}
+          CONCLUSION: ${{ env.WORKFLOW_CONCLUSION }}
         working-directory: /tmp
         run: |
-          if [[ "${WORKFLOW_CONCLUSION}" == "success" ]]; then
-            echo "${WORKFLOW_CONCLUSION}" && exit 0
-          elif [[ "${WORKFLOW_CONCLUSION}" == "failure" ]]; then
-            echo "${WORKFLOW_CONCLUSION}" && exit 1
+          if [[ "${CONCLUSION}" == "success" ]]; then
+            echo "${CONCLUSION}" && exit 0
+          elif [[ "${CONCLUSION}" == "failure" ]]; then
+            echo "${CONCLUSION}" && exit 1
           fi
