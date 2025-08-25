@@ -33,7 +33,7 @@ jobs:
         with:
           workload_identity_provider: "projects/12758742386/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
           service_account: "terraform-provider-cosign@chainguard-github-secrets.iam.gserviceaccount.com"
-      - uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a # v2.1.4
+      - uses: google-github-actions/setup-gcloud@26f734c2779b00b7dda794207734c511110a4368 # v3.0.0
         with:
           project_id: "chainguard-github-secrets"
       - uses: google-github-actions/get-secretmanager-secrets@a8440875e1c2892062aef9061228d4f1af8f919b # v2.2.3
