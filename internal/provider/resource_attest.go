@@ -98,7 +98,7 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 				Optional:            true,
 				Required:            false,
-				Default:             stringdefault.StaticString("APPEND"),
+				Default:             stringdefault.StaticString("SKIPSAME"),
 				Validators:          []validator.String{ConflictValidator{}},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
