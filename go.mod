@@ -27,7 +27,7 @@ require (
 	github.com/sigstore/sigstore v1.9.5
 	github.com/transparency-dev/merkle v0.0.2
 	golang.org/x/oauth2 v0.31.0
-	golang.org/x/time v0.13.0
+	golang.org/x/time v0.14.0
 )
 
 require (
