@@ -26,7 +26,7 @@ require (
 	github.com/sigstore/rekor v1.4.2
 	github.com/sigstore/sigstore v1.9.6-0.20250729224751-181c5d3339b3
 	github.com/transparency-dev/merkle v0.0.2
-	golang.org/x/oauth2 v0.33.0
+	golang.org/x/oauth2 v0.34.0
 	golang.org/x/time v0.14.0
 )
 
