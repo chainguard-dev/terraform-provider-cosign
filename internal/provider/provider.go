@@ -21,6 +21,10 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/client"
 )
 
+// Environment variable that, when set, skips attesting/signing altogether
+// and silences any associated warnings
+const tfCosignDisableEnvVar = "TF_COSIGN_DISABLE"
+
 // Ensure Provider satisfies various provider interfaces.
 var _ provider.Provider = &Provider{}
 
