@@ -286,8 +286,8 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		return "", nil, errors.New("unable to parse image digest")
 	}
 
-	if os.Getenv("TF_COSIGN_DISABLE") != "" {
-		return digest.String(), errors.New("TF_COSIGN_DISABLE is set, skipping attesting"), nil
+	if os.Getenv(tfCosignDisableEnvVar) != "" {
+		return digest.String(), fmt.Errorf("%s is set, skipping attesting", tfCosignDisableEnvVar), nil
 	}
 	if !r.popts.oidc.Enabled(ctx) {
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
@@ -372,7 +372,7 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
-	} else if warning != nil {
+	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) != "" {
 		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
 	}
 
@@ -420,7 +420,7 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
-	} else if warning != nil {
+	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) != "" {
 		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
 	}
 
