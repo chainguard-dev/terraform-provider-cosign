@@ -160,7 +160,7 @@ func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if err != nil {
 		resp.Diagnostics.AddError("error while signing", err.Error())
 		return
-	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) != "" {
+	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
 		resp.Diagnostics.AddWarning("warning while signing", warning.Error())
 	}
 
@@ -202,7 +202,7 @@ func (r *SignResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if err != nil {
 		resp.Diagnostics.AddError("error while signing", err.Error())
 		return
-	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) != "" {
+	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
 		resp.Diagnostics.AddWarning("warning while signing", warning.Error())
 	}
 

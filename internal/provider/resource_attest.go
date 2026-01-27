@@ -372,7 +372,7 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
-	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) != "" {
+	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
 		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
 	}
 
@@ -420,7 +420,7 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
-	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) != "" {
+	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
 		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
 	}
 
