@@ -3,7 +3,7 @@ module github.com/chainguard-dev/terraform-provider-cosign
 go 1.25.5
 
 require (
-	github.com/chainguard-dev/terraform-provider-oci v0.0.25
+	github.com/chainguard-dev/terraform-provider-oci v0.0.27
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/go-openapi/runtime v0.29.2
 	github.com/go-openapi/strfmt v0.25.0
