@@ -143,7 +143,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	// TODO: This should probably be configurable?
 	var annotations map[string]interface{} = nil
 
-	if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.ropts); err != nil {
+	if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
 		return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
 	}
 	return digest.String(), nil, nil
