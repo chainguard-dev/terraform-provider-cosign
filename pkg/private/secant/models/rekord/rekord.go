@@ -5,7 +5,7 @@ import (
 	"hash"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/conv"
 	"github.com/sigstore/rekor/pkg/generated/models"
 	hashedrekord_v001 "github.com/sigstore/rekor/pkg/types/hashedrekord/v0.0.1"
 )
@@ -18,8 +18,8 @@ func Entry(sha256CheckSum hash.Hash, signature, pubKey []byte) models.ProposedEn
 		HashedRekordObj: models.HashedrekordV001Schema{
 			Data: &models.HashedrekordV001SchemaData{
 				Hash: &models.HashedrekordV001SchemaDataHash{
-					Algorithm: swag.String(models.HashedrekordV001SchemaDataHashAlgorithmSha256),
-					Value:     swag.String(hex.EncodeToString(sha256CheckSum.Sum(nil))),
+					Algorithm: conv.Pointer(models.HashedrekordV001SchemaDataHashAlgorithmSha256),
+					Value:     conv.Pointer(hex.EncodeToString(sha256CheckSum.Sum(nil))),
 				},
 			},
 			Signature: &models.HashedrekordV001SchemaSignature{
@@ -31,7 +31,7 @@ func Entry(sha256CheckSum hash.Hash, signature, pubKey []byte) models.ProposedEn
 		},
 	}
 	pe := models.Hashedrekord{
-		APIVersion: swag.String(re.APIVersion()),
+		APIVersion: conv.Pointer(re.APIVersion()),
 		Spec:       re.HashedRekordObj,
 	}
 

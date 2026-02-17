@@ -22,7 +22,7 @@ import (
 )
 
 // Environment variable that, when set, skips attesting/signing altogether
-// and silences any associated warnings
+// and silences any associated warnings.
 const tfCosignDisableEnvVar = "TF_COSIGN_DISABLE"
 
 // Ensure Provider satisfies various provider interfaces.

@@ -27,7 +27,7 @@ type Option func(*options)
 type options struct {
 	UserAgent  string
 	RetryCount uint
-	Logger     interface{}
+	Logger     any
 	transport  http.RoundTripper
 }
 
@@ -74,7 +74,7 @@ func WithTransport(transport http.RoundTripper) Option {
 }
 
 // WithLogger sets the logger; it must implement either retryablehttp.Logger or retryablehttp.LeveledLogger; if not, this will not take effect.
-func WithLogger(logger interface{}) Option {
+func WithLogger(logger any) Option {
 	return func(o *options) {
 		switch logger.(type) {
 		case retryablehttp.Logger, retryablehttp.LeveledLogger:
@@ -88,7 +88,7 @@ type roundTripper struct {
 	UserAgent string
 }
 
-// RoundTrip implements `http.RoundTripper`
+// RoundTrip implements `http.RoundTripper`.
 func (rt *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.Header.Set("User-Agent", rt.UserAgent)
 

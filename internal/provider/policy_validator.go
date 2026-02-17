@@ -31,7 +31,7 @@ type warningCollector struct {
 	diags diag.Diagnostics
 }
 
-func (wc *warningCollector) Write(s string, i ...interface{}) {
+func (wc *warningCollector) Write(s string, i ...any) {
 	wc.diags.AddWarning("Warning", fmt.Sprintf(s, i...))
 }
 

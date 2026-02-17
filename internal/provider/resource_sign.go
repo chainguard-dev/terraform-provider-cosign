@@ -117,7 +117,7 @@ func (r *SignResource) Configure(ctx context.Context, req resource.ConfigureRequ
 func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
-		return "", nil, errors.New("Unable to parse image digest")
+		return "", nil, errors.New("unable to parse image digest")
 	}
 
 	if os.Getenv(tfCosignDisableEnvVar) != "" {
@@ -141,7 +141,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	defer cancel()
 
 	// TODO: This should probably be configurable?
-	var annotations map[string]interface{} = nil
+	var annotations map[string]any = nil
 
 	if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
 		return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
