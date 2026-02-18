@@ -304,9 +304,23 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			reader = bytes.NewBufferString(data.Predicate.ValueString())
 
 		case len(data.PredicateFile.Elements()) > 0:
-			attrs := data.PredicateFile.Elements()[0].(basetypes.ObjectValue).Attributes()
-			path := attrs["path"].(basetypes.StringValue).ValueString()
-			expectedHash := attrs["sha256"].(basetypes.StringValue).ValueString()
+			objVal, ok := data.PredicateFile.Elements()[0].(basetypes.ObjectValue)
+			if !ok {
+				return "", nil, fmt.Errorf("expected ObjectValue, got %T", data.PredicateFile.Elements()[0])
+			}
+			attrs := objVal.Attributes()
+
+			pathVal, ok := attrs["path"].(basetypes.StringValue)
+			if !ok {
+				return "", nil, fmt.Errorf("expected path to be StringValue, got %T", attrs["path"])
+			}
+			path := pathVal.ValueString()
+
+			hashVal, ok := attrs["sha256"].(basetypes.StringValue)
+			if !ok {
+				return "", nil, fmt.Errorf("expected sha256 to be StringValue, got %T", attrs["sha256"])
+			}
+			expectedHash := hashVal.ValueString()
 
 			// TODO(mattmoor): If we don't want to buffer this into memory, then
 			// we can create an io.Reader that computes the SHA256 as it reads

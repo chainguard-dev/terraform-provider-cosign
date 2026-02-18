@@ -4,8 +4,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   goreleaser:
@@ -21,11 +20,14 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - run: git fetch --prune --unshallow
+
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version-file: 'go.mod'
           cache: false
+          check-latest: true
 
       # This is provisioned here: https://github.com/chainguard-dev/secrets/blob/main/terraform-provider-cosign.tf
       - uses: step-security/google-github-auth@57c51210cb4d85d8a5d39dc4c576c79bd693f914 # v3.0.1
@@ -33,9 +35,11 @@ jobs:
         with:
           workload_identity_provider: "projects/12758742386/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
           service_account: "terraform-provider-cosign@chainguard-github-secrets.iam.gserviceaccount.com"
+
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
         with:
           project_id: "chainguard-github-secrets"
+
       - uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
         id: secrets
         with:

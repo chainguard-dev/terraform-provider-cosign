@@ -79,7 +79,7 @@ func getTlogEntry(ctx context.Context, rekorClient *client.Rekor, entryUUID stri
 
 // verifyTLogEntryOffline verifies a TLog entry against a map of trusted rekorPubKeys indexed
 // by log id.
-func verifyTLogEntryOffline(ctx context.Context, e *models.LogEntryAnon, rekorPubKeys *trustedTransparencyLogPubKeys) error {
+func verifyTLogEntryOffline(_ context.Context, e *models.LogEntryAnon, rekorPubKeys *trustedTransparencyLogPubKeys) error {
 	if e.Verification == nil || e.Verification.InclusionProof == nil {
 		return errors.New("inclusion proof not provided")
 	}
@@ -101,7 +101,11 @@ func verifyTLogEntryOffline(ctx context.Context, e *models.LogEntryAnon, rekorPu
 	}
 
 	rootHash, _ := hex.DecodeString(*e.Verification.InclusionProof.RootHash)
-	entryBytes, err := base64.StdEncoding.DecodeString(e.Body.(string))
+	bodyStr, ok := e.Body.(string)
+	if !ok {
+		return fmt.Errorf("expected Body to be a string, got %T", e.Body)
+	}
+	entryBytes, err := base64.StdEncoding.DecodeString(bodyStr)
 	if err != nil {
 		return err
 	}
@@ -125,7 +129,11 @@ func verifyTLogEntryOffline(ctx context.Context, e *models.LogEntryAnon, rekorPu
 	if !ok {
 		return errors.New("rekor log public key not found for payload. Check your TUF root (see cosign initialize) or set a custom key with env var SIGSTORE_REKOR_PUBLIC_KEY")
 	}
-	if err := verifySET(payload, []byte(e.Verification.SignedEntryTimestamp), pubKey.PubKey.(*ecdsa.PublicKey)); err != nil {
+	ecdsaPubKey, ok := pubKey.PubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("expected ECDSA public key, got %T", pubKey.PubKey)
+	}
+	if err := verifySET(payload, []byte(e.Verification.SignedEntryTimestamp), ecdsaPubKey); err != nil {
 		return fmt.Errorf("verifying signedEntryTimestamp: %w", err)
 	}
 	return nil
@@ -284,7 +292,11 @@ func getUUID(entryUUID string) (string, error) {
 }
 
 func computeLeafHash(e *models.LogEntryAnon) ([]byte, error) {
-	entryBytes, err := base64.StdEncoding.DecodeString(e.Body.(string))
+	bodyStr, ok := e.Body.(string)
+	if !ok {
+		return nil, fmt.Errorf("expected Body to be a string, got %T", e.Body)
+	}
+	entryBytes, err := base64.StdEncoding.DecodeString(bodyStr)
 	if err != nil {
 		return nil, err
 	}

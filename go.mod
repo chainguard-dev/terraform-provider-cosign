@@ -1,6 +1,6 @@
 module github.com/chainguard-dev/terraform-provider-cosign
 
-go 1.25.5
+go 1.25.7
 
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.0.27

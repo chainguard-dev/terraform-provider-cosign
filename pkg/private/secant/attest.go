@@ -19,7 +19,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"github.com/sigstore/cosign/v2/pkg/cosign/attestation"
-	"github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
@@ -396,5 +395,5 @@ func WithRekorEntryType(t string) AttestOption {
 type sigsubset interface {
 	Annotations() (map[string]string, error)
 	Payload() ([]byte, error)
-	Bundle() (*bundle.RekorBundle, error)
+	Bundle() (*cbundle.RekorBundle, error)
 }

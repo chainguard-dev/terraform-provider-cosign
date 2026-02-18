@@ -21,9 +21,13 @@ import (
 
 // SignEntity is roughly equivalent to cosign sign.
 // It operates on the provided oci.SignedEntity without interacting with the registry.
-func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]interface{}, cs types.Cosigner, rekorClient *client.Rekor) (oci.SignedEntity, error) {
+func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, conflict string, annotations map[string]any, cs types.Cosigner, rekorClient *client.Rekor) (oci.SignedEntity, error) {
 	// Get the digest for this entity in our walk.
-	d, err := se.(interface{ Digest() (v1.Hash, error) }).Digest()
+	digestable, ok := se.(interface{ Digest() (v1.Hash, error) })
+	if !ok {
+		return nil, fmt.Errorf("entity does not implement Digest() method")
+	}
+	d, err := digestable.Digest()
 	if err != nil {
 		return nil, fmt.Errorf("computing digest: %w", err)
 	}
@@ -83,7 +87,7 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 }
 
 // Sign is roughly equivalent to cosign sign.
-func Sign(ctx context.Context, conflict string, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
+func Sign(ctx context.Context, conflict string, annotations map[string]any, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, ref := range imgs {
@@ -94,7 +98,11 @@ func Sign(ctx context.Context, conflict string, annotations map[string]interface
 
 		if err := walk.SignedEntity(ctx, se, func(ctx context.Context, se oci.SignedEntity) error {
 			// Get the digest for this entity in our walk.
-			d, err := se.(interface{ Digest() (v1.Hash, error) }).Digest()
+			digestable, ok := se.(interface{ Digest() (v1.Hash, error) })
+			if !ok {
+				return fmt.Errorf("entity does not implement Digest() method")
+			}
+			d, err := digestable.Digest()
 			if err != nil {
 				return fmt.Errorf("computing digest: %w", err)
 			}

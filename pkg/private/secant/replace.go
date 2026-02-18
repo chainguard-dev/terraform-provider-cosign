@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// Replace replaces signatures on the image
+	// Replace replaces signatures on the image.
 	Replace = "REPLACE"
 	// SkipSame skips writing identical signatures but otherwise replaces signatures on the image.
 	SkipSame = "SKIPSAME"
@@ -74,7 +74,7 @@ func getPredicateType(s sigsubset) (string, error) {
 	}
 
 	// Otherwise we need to fetch and parse the payload.
-	var signaturePayload map[string]interface{}
+	var signaturePayload map[string]any
 	p, err := s.Payload()
 	if err != nil {
 		return "", fmt.Errorf("could not get payload: %w", err)
@@ -88,12 +88,16 @@ func getPredicateType(s sigsubset) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("could not find 'payload' in payload data")
 	}
-	decodedPayload, err := base64.StdEncoding.DecodeString(val.(string))
+	valStr, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("expected payload to be a string, got %T", val)
+	}
+	decodedPayload, err := base64.StdEncoding.DecodeString(valStr)
 	if err != nil {
 		return "", fmt.Errorf("could not decode 'payload': %w", err)
 	}
 
-	var payloadData map[string]interface{}
+	var payloadData map[string]any
 	if err := json.Unmarshal(decodedPayload, &payloadData); err != nil {
 		return "", fmt.Errorf("unmarshal payloadData: %w", err)
 	}
