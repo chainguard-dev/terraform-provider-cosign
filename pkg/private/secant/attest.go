@@ -175,7 +175,7 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		}
 		entry, err := tlog.Upload(ctx, rekorClient, e)
 		if err != nil {
-			return nil, fmt.Errorf("uploading to rekor: %w", err)
+			return nil, fmt.Errorf("uploading to rekor (predicate type %q): %w", statement.Type, err)
 		}
 
 		bundle := cbundle.EntryToBundle(entry)
