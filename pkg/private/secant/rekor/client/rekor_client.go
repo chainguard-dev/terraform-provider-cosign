@@ -15,6 +15,8 @@
 package client
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -41,6 +43,14 @@ func GetRekorClient(rekorServerURL string, opts ...Option) (*client.Rekor, error
 	}
 	retryableClient.RetryMax = int(o.RetryCount)
 	retryableClient.Logger = o.Logger
+	retryableClient.ErrorHandler = func(resp *http.Response, err error, numTries int) (*http.Response, error) {
+		if err != nil {
+			return nil, fmt.Errorf("giving up after %d attempt(s): %w", numTries, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("giving up after %d attempt(s): status %d: %s", numTries, resp.StatusCode, body)
+	}
 
 	httpClient := retryableClient.StandardClient()
 
