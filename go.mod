@@ -9,7 +9,7 @@ require (
 	github.com/go-openapi/strfmt v0.25.0
 	github.com/go-openapi/swag/conv v0.25.4
 	github.com/google/certificate-transparency-go v1.3.3
-	github.com/google/go-containerregistry v0.21.1
+	github.com/google/go-containerregistry v0.21.2
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-cleanhttp v0.5.2
 	github.com/hashicorp/go-retryablehttp v0.7.8
