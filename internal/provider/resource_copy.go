@@ -151,7 +151,7 @@ func (r *CopyResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.Id = types.StringValue(digest.String())
 	data.CopiedRef = types.StringValue(digest.String())
 
-	// TODO(mattmoor): should we check that the Copyature didn't disappear?
+	// TODO(mattmoor): should we check that the copy didn't disappear?
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
