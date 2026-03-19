@@ -113,10 +113,12 @@ data "cosign_verify" "bar" {
 			},
 
 			// Verify import works for the sign resource.
+			// conflict, fulcio_url, rekor_url cannot be reconstructed from import.
 			{
-				ResourceName:      "cosign_sign.foo",
-				ImportState:       true,
-				ImportStateVerify: true,
+				ResourceName:            "cosign_sign.foo",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"conflict", "fulcio_url", "rekor_url"},
 			},
 
 			// Update the sign resource to sign the second image, and verify that.

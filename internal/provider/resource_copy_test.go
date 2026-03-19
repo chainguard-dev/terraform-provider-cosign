@@ -109,9 +109,11 @@ data "cosign_verify" "copy" {
 			),
 		}, {
 			// Verify import works for the copy resource.
-			ResourceName:      "cosign_copy.copy",
-			ImportState:       true,
-			ImportStateVerify: true,
+			// source and destination cannot be reconstructed from import.
+			ResourceName:            "cosign_copy.copy",
+			ImportState:             true,
+			ImportStateVerify:       true,
+			ImportStateVerifyIgnore: []string{"source", "destination"},
 		}},
 	})
 }
