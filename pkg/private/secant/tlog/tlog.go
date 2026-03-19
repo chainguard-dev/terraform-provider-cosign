@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -34,7 +35,7 @@ func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEn
 		// If the entry already exists, we get a specific error.
 		var existsErr *entries.CreateLogEntryConflict
 		if errors.As(err, &existsErr) {
-			fmt.Println("Signature already exists.")
+			fmt.Fprintln(os.Stderr, "Signature already exists.")
 			uriSplit := strings.Split(existsErr.Location.String(), "/")
 			uuid := uriSplit[len(uriSplit)-1]
 			e, err := getTlogEntry(ctx, rekorClient, uuid)
