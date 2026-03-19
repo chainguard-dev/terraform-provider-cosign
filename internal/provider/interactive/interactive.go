@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/sigstore/cosign/v2/pkg/providers"
+	"github.com/sigstore/cosign/v3/pkg/providers"
 	"github.com/sigstore/sigstore/pkg/oauth"
 	"github.com/sigstore/sigstore/pkg/oauthflow"
 	"golang.org/x/oauth2"
