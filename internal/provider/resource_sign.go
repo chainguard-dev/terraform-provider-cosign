@@ -108,7 +108,7 @@ func (r *SignResource) Configure(ctx context.Context, req resource.ConfigureRequ
 
 	popts, ok := req.ProviderData.(*ProviderOpts)
 	if !ok || popts == nil {
-		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		resp.Diagnostics.AddError("Unexpected provider configuration", "Expected *ProviderOpts, got invalid provider data")
 		return
 	}
 	r.popts = popts
@@ -158,10 +158,10 @@ func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	digest, warning, err := r.doSign(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("error while signing", err.Error())
+		resp.Diagnostics.AddError("Error signing image", err.Error())
 		return
 	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
-		resp.Diagnostics.AddWarning("warning while signing", warning.Error())
+		resp.Diagnostics.AddWarning("Signing skipped", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -180,7 +180,7 @@ func (r *SignResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse image digest: %v", err))
+		resp.Diagnostics.AddError("Invalid image digest", fmt.Sprintf("Unable to parse image digest: %v", err))
 		return
 	}
 	data.Id = types.StringValue(digest.String())
@@ -200,10 +200,10 @@ func (r *SignResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	digest, warning, err := r.doSign(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("error while signing", err.Error())
+		resp.Diagnostics.AddError("Error signing image", err.Error())
 		return
 	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
-		resp.Diagnostics.AddWarning("warning while signing", warning.Error())
+		resp.Diagnostics.AddWarning("Signing skipped", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
