@@ -112,6 +112,13 @@ data "cosign_verify" "bar" {
 				),
 			},
 
+			// Verify import works for the sign resource.
+			{
+				ResourceName:      "cosign_sign.foo",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+
 			// Update the sign resource to sign the second image, and verify that.
 			{
 				Config: fmt.Sprintf(`

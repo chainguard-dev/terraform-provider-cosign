@@ -139,6 +139,13 @@ data "cosign_verify" "bar" {
 				),
 			},
 
+			// Verify import works for the attest resource.
+			{
+				ResourceName:      "cosign_attest.foo",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+
 			// Update the resource to attest the second image (this time via a file!), and verify it.
 			{
 				Config: fmt.Sprintf(`

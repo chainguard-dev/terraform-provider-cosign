@@ -107,6 +107,11 @@ data "cosign_verify" "copy" {
 					"data.cosign_verify.copy", "verified_ref", dst.Digest(dig1.String()).String(),
 				),
 			),
+		}, {
+			// Verify import works for the copy resource.
+			ResourceName:      "cosign_copy.copy",
+			ImportState:       true,
+			ImportStateVerify: true,
 		}},
 	})
 }
