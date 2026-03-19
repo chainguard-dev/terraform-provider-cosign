@@ -96,11 +96,17 @@ func verifyTLogEntryOffline(_ context.Context, e *models.LogEntryAnon, rekorPubK
 
 	hashes := [][]byte{}
 	for _, h := range e.Verification.InclusionProof.Hashes {
-		hb, _ := hex.DecodeString(h)
+		hb, err := hex.DecodeString(h)
+		if err != nil {
+			return fmt.Errorf("decoding inclusion proof hash %q: %w", h, err)
+		}
 		hashes = append(hashes, hb)
 	}
 
-	rootHash, _ := hex.DecodeString(*e.Verification.InclusionProof.RootHash)
+	rootHash, err := hex.DecodeString(*e.Verification.InclusionProof.RootHash)
+	if err != nil {
+		return fmt.Errorf("decoding root hash: %w", err)
+	}
 	bodyStr, ok := e.Body.(string)
 	if !ok {
 		return fmt.Errorf("expected Body to be a string, got %T", e.Body)
