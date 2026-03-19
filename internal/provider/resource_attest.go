@@ -445,21 +445,14 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *AttestResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var data *AttestResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// TODO: If we ever want to delete the image from the registry, we can do it here.
+func (r *AttestResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
 }
 
 func (r *AttestResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// ConflictValidator is a string validator that checks that the string is valid OCI reference by digest.
+// ConflictValidator is a string validator that checks the conflict strategy is valid.
 type ConflictValidator struct{}
 
 var _ validator.String = ConflictValidator{}
