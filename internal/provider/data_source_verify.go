@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	// policy-controller v0.14.0 expects cosign v2 ociremote.Option in its Verify() signature,
+	// so this must stay on v2 until policy-controller upgrades to cosign v3.
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 )
 

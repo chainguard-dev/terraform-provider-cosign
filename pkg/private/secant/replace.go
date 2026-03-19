@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sigstore/cosign/v2/pkg/oci"
+	"github.com/sigstore/cosign/v3/pkg/oci"
 )
 
 const (

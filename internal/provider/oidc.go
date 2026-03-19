@@ -3,13 +3,13 @@ package provider
 import (
 	"context"
 
-	"github.com/sigstore/cosign/v2/pkg/providers"
+	"github.com/sigstore/cosign/v3/pkg/providers"
 
 	_ "github.com/chainguard-dev/terraform-provider-cosign/internal/provider/interactive"
-	_ "github.com/sigstore/cosign/v2/pkg/providers/envvar"
-	_ "github.com/sigstore/cosign/v2/pkg/providers/filesystem"
-	_ "github.com/sigstore/cosign/v2/pkg/providers/github"
-	_ "github.com/sigstore/cosign/v2/pkg/providers/google"
+	_ "github.com/sigstore/cosign/v3/pkg/providers/envvar"
+	_ "github.com/sigstore/cosign/v3/pkg/providers/filesystem"
+	_ "github.com/sigstore/cosign/v3/pkg/providers/github"
+	_ "github.com/sigstore/cosign/v3/pkg/providers/google"
 )
 
 // An impl that represents github.com/sigstore/cosign/pkg/providers/*.
