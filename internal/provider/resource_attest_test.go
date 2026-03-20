@@ -139,6 +139,15 @@ data "cosign_verify" "bar" {
 				),
 			},
 
+			// Verify import works for the attest resource.
+			// Predicate fields and computed defaults cannot be reconstructed from import.
+			{
+				ResourceName:            "cosign_attest.foo",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"predicate_type", "predicate", "predicate_file", "predicates", "conflict", "fulcio_url", "rekor_url"},
+			},
+
 			// Update the resource to attest the second image (this time via a file!), and verify it.
 			{
 				Config: fmt.Sprintf(`
