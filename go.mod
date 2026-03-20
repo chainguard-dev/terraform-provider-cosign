@@ -20,7 +20,7 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.10.0
 	github.com/hashicorp/terraform-plugin-testing v1.15.0
 	github.com/secure-systems-lab/go-securesystemslib v0.10.0
-	github.com/sigstore/cosign/v2 v2.5.0
+	github.com/sigstore/cosign/v2 v2.6.2
 	github.com/sigstore/cosign/v3 v3.0.5
 	github.com/sigstore/fulcio v1.8.5
 	github.com/sigstore/policy-controller v0.14.0
@@ -173,7 +173,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry/pkg/authn/k8schain v0.0.0-20230919002926-dbcd01c402b2 // indirect
 	github.com/google/go-containerregistry/pkg/authn/kubernetes v0.0.0-20230919002926-dbcd01c402b2 // indirect
-	github.com/google/go-github/v55 v55.0.0 // indirect
 	github.com/google/go-github/v73 v73.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -271,7 +270,6 @@ require (
 	github.com/sigstore/sigstore/pkg/signature/kms/azure v1.10.4 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/gcp v1.10.4 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/hashivault v1.10.4 // indirect
-	github.com/sigstore/timestamp-authority v1.2.9 // indirect
 	github.com/sigstore/timestamp-authority/v2 v2.0.4 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
