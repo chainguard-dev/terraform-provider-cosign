@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccResourceCosignAttest(t *testing.T) {
@@ -71,6 +72,8 @@ func TestAccResourceCosignAttest(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Attestations persist in the registry after destroy (by design).
+		CheckDestroy: func(*terraform.State) error { return nil },
 		Steps: []resource.TestStep{
 			// Attest and verify the first image.
 			{
