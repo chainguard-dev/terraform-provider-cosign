@@ -11,6 +11,8 @@ import (
 	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
+	legacySecant "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/legacy"
+	legacyStypes "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/legacy/types"
 	stypes "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -280,7 +282,7 @@ func toPredObject(data *AttestResourceModel) *PredicateObject {
 	return nil
 }
 
-func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel, preds []PredicateObject) (string, error, error) {
+func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel, preds []PredicateObject, legacy bool) (string, error, error) {
 	digest, err := name.NewDigest(arm.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("unable to parse image digest")
@@ -294,6 +296,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	}
 
 	statements := []*stypes.Statement{}
+	legacyStatements := []*legacyStypes.Statement{}
 
 	for _, data := range preds {
 		// Write the attestation to a temporary file.
@@ -349,15 +352,22 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			return "", nil, errors.New("one of predicate or predicate_file must be specified")
 		}
 
-		stmt, err := secant.NewStatement(digest, reader, data.PredicateType.ValueString())
-		if err != nil {
-			return "", nil, fmt.Errorf("creating attestation statement: %w", err)
+		if legacy {
+			stmt, err := legacySecant.NewStatement(digest, reader, data.PredicateType.ValueString())
+			if err != nil {
+				return "", nil, fmt.Errorf("creating attestation statement: %w", err)
+			}
+			legacyStatements = append(legacyStatements, stmt)
+		} else {
+			stmt, err := secant.NewStatement(digest, reader, data.PredicateType.ValueString())
+			if err != nil {
+				return "", nil, fmt.Errorf("creating attestation statement: %w", err)
+			}
+			statements = append(statements, stmt)
 		}
-
-		statements = append(statements, stmt)
 	}
 
-	sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
+	sv, legacySv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
 	if err != nil {
 		return "", nil, fmt.Errorf("creating signer: %w", err)
 	}
@@ -370,7 +380,13 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+	var attestErr error
+	if legacy {
+		attestErr = legacySecant.Attest(ctx, arm.Conflict.ValueString(), legacyStatements, legacySv, rekorClient, r.popts.withContext(ctx), legacySecant.WithRekorEntryType(r.popts.defaultAttestationEntryType))
+	} else {
+		attestErr = secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType))
+	}
+	if attestErr != nil {
 		return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 	}
 
@@ -390,7 +406,8 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	digest, warning, err := r.doAttest(ctx, data, preds)
+	// TODO: add configurable options for legacy/latest/both
+	digest, warning, err := r.doAttest(ctx, data, preds, false)
 	if err != nil {
 		resp.Diagnostics.AddError("Error attesting image", err.Error())
 		return
@@ -444,7 +461,8 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	digest, warning, err := r.doAttest(ctx, data, preds)
+	// TODO: add configurable options for legacy/latest/both
+	digest, warning, err := r.doAttest(ctx, data, preds, false)
 	if err != nil {
 		resp.Diagnostics.AddError("Error attesting image", err.Error())
 		return
