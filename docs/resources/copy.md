@@ -3,12 +3,12 @@
 page_title: "cosign_copy Resource - terraform-provider-cosign"
 subcategory: ""
 description: |-
-  This copies the provided image digest cosign copy.
+  This copies the provided image digest using cosign copy.
 ---
 
 # cosign_copy (Resource)
 
-This copies the provided image digest cosign copy.
+This copies the provided image digest using cosign copy.
 
 
 
