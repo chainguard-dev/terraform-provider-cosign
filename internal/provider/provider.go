@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
-	legacyFulcio "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/legacy/fulcio"
 	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/google"
@@ -59,11 +59,15 @@ type ProviderOpts struct {
 	sync.Mutex
 
 	// Keyed off fulcio URL.
-	signers       map[string]*fulcio.SignerVerifier
-	legacySigners map[string]*legacyFulcio.SignerVerifier
+	signers map[string]*fulcio.SignerVerifier
 
 	// Keyed off rekor URL.
 	rekorClients map[string]*client.Rekor
+
+	// Lazily initialized bundle signer for the "current" signing path.
+	// Cached at the provider level so that the ephemeral keypair and OIDC token
+	// are generated at most once across all sign/attest resource operations.
+	bundleSigner *secant.BundleSigner
 }
 
 func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
@@ -83,45 +87,44 @@ func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
 	return rekorClient, nil
 }
 
-func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier, *legacyFulcio.SignerVerifier, error) {
+func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier, error) {
 	p.Lock()
 	defer p.Unlock()
 
-	var sv *fulcio.SignerVerifier
-	var legacySv *legacyFulcio.SignerVerifier
-	var foundSv, foundLegacySv bool
-
-	sv, foundSv = p.signers[fulcioUrl]
-	legacySv, foundLegacySv = p.legacySigners[fulcioUrl]
-	if foundSv && foundLegacySv {
-		return sv, legacySv, nil
+	if sv, ok := p.signers[fulcioUrl]; ok {
+		return sv, nil
 	}
 
 	furl, err := url.Parse(fulcioUrl)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	fulcioClient := api.NewClient(furl, api.WithUserAgent("terraform-provider-cosign"))
 
-	if !foundSv {
-		var err error
-		sv, err = fulcio.NewSigner(p.oidc, fulcioClient)
-		if err != nil {
-			return nil, nil, err
-		}
-		p.signers[fulcioUrl] = sv
+	sv, err := fulcio.NewSigner(p.oidc, fulcioClient)
+	if err != nil {
+		return nil, err
+	}
+	p.signers[fulcioUrl] = sv
+
+	return sv, nil
+}
+
+func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
+	p.Lock()
+	defer p.Unlock()
+
+	if p.bundleSigner != nil {
+		return p.bundleSigner, nil
 	}
 
-	if !foundLegacySv {
-		var err error
-		legacySv, err = legacyFulcio.NewSigner(p.oidc, fulcioClient)
-		if err != nil {
-			return nil, nil, err
-		}
-		p.legacySigners[fulcioUrl] = legacySv
+	bs, err := secant.NewBundleSigner(p.oidc)
+	if err != nil {
+		return nil, err
 	}
+	p.bundleSigner = bs
 
-	return sv, legacySv, nil
+	return bs, nil
 }
 
 func (p *ProviderOpts) withContext(ctx context.Context) []remote.Option {
@@ -193,7 +196,6 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		defaultAttestationEntryType: attestationEntryType,
 		signingFormatMode:           signingFormatMode,
 		signers:                     map[string]*fulcio.SignerVerifier{},
-		legacySigners:               map[string]*legacyFulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
 	}
 

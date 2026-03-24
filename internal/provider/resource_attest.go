@@ -7,12 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
-	legacySecant "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/legacy"
-	legacyStypes "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/legacy/types"
 	stypes "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -295,16 +292,16 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}
 
-	statements := []*stypes.Statement{}
-	legacyStatements := []*legacyStypes.Statement{}
+	legacyStatements := []*stypes.Statement{}
+	currentStatements := []*stypes.Statement{}
 
 	for _, data := range preds {
 		// Write the attestation to a temporary file.
-		var reader io.Reader
+		var predBytes []byte
 		switch {
 		// Write the predicate to a file to pass to attest.
 		case data.Predicate.ValueString() != "":
-			reader = bytes.NewBufferString(data.Predicate.ValueString())
+			predBytes = []byte(data.Predicate.ValueString())
 
 		case len(data.PredicateFile.Elements()) > 0:
 			objVal, ok := data.PredicateFile.Elements()[0].(basetypes.ObjectValue)
@@ -338,57 +335,59 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			if fi.Size() > maxPredicateSize {
 				return "", nil, fmt.Errorf("predicate file %q is %d bytes, exceeds maximum of %d bytes", path, fi.Size(), maxPredicateSize)
 			}
-			contents, err := os.ReadFile(path)
-			if err != nil {
-				return "", nil, err
+			var readErr error
+			predBytes, readErr = os.ReadFile(path)
+			if readErr != nil {
+				return "", nil, readErr
 			}
-			rawHash := sha256.Sum256(contents)
+			rawHash := sha256.Sum256(predBytes)
 			if got, want := hex.EncodeToString(rawHash[:]), expectedHash; got != want {
 				return "", nil, fmt.Errorf("sha256(%q) = %s, expected %s", path, got, want)
 			}
-			reader = bytes.NewBuffer(contents)
 
 		default:
 			return "", nil, errors.New("one of predicate or predicate_file must be specified")
 		}
 
 		if shouldPerformLegacy(r.popts.signingFormatMode) {
-			stmt, err := legacySecant.NewStatement(digest, reader, data.PredicateType.ValueString())
+			stmt, err := secant.NewStatement(digest, bytes.NewReader(predBytes), data.PredicateType.ValueString())
 			if err != nil {
 				return "", nil, fmt.Errorf("creating legacy attestation statement: %w", err)
 			}
 			legacyStatements = append(legacyStatements, stmt)
 		}
 		if shouldPerformCurrent(r.popts.signingFormatMode) {
-			stmt, err := secant.NewStatement(digest, reader, data.PredicateType.ValueString())
+			stmt, err := secant.NewStatement(digest, bytes.NewReader(predBytes), data.PredicateType.ValueString())
 			if err != nil {
 				return "", nil, fmt.Errorf("creating attestation statement: %w", err)
 			}
-			statements = append(statements, stmt)
+			currentStatements = append(currentStatements, stmt)
 		}
-	}
-
-	sv, legacySv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating signer: %w", err)
-	}
-
-	rekorClient, err := r.popts.rekorClient(arm.RekorURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating rekor client: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
 	if shouldPerformLegacy(r.popts.signingFormatMode) {
-		if err := legacySecant.Attest(ctx, arm.Conflict.ValueString(), legacyStatements, legacySv, rekorClient, r.popts.withContext(ctx), legacySecant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
-			return "", nil, fmt.Errorf("unable to legacy attest image %q: %w", digest.String(), err)
+		sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating signer: %w", err)
+		}
+		rekorClient, err := r.popts.rekorClient(arm.RekorURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating rekor client: %w", err)
+		}
+		if err := secant.Attest(ctx, arm.Conflict.ValueString(), legacyStatements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 		}
 	}
 	if shouldPerformCurrent(r.popts.signingFormatMode) {
-		if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
-			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
+		bundleSigner, err := r.popts.getBundleSigner()
+		if err != nil {
+			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
+		}
+		if err := secant.AttestBundle(ctx, currentStatements, bundleSigner, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+			return "", nil, fmt.Errorf("unable to attest image %q (bundle): %w", digest.String(), err)
 		}
 	}
 

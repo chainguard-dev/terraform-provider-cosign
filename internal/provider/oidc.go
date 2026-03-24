@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"sync"
 
 	"github.com/sigstore/cosign/v3/pkg/providers"
 
@@ -14,12 +15,21 @@ import (
 
 // An impl that represents github.com/sigstore/cosign/pkg/providers/*.
 type oidcProvider struct {
+	once  sync.Once
+	token string
+	err   error
 }
 
 func (p *oidcProvider) Enabled(ctx context.Context) bool {
 	return providers.Enabled(ctx)
 }
 
+// Provide fetches an OIDC token exactly once and caches it.
+// Both the legacy fulcio.SignerVerifier and the BundleSigner paths call this,
+// so caching here ensures at most one authentication prompt per provider lifecycle.
 func (p *oidcProvider) Provide(ctx context.Context, audience string) (string, error) {
-	return providers.Provide(ctx, audience)
+	p.once.Do(func() {
+		p.token, p.err = providers.Provide(ctx, audience)
+	})
+	return p.token, p.err
 }
