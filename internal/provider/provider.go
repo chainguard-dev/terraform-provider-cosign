@@ -28,7 +28,7 @@ import (
 // and silences any associated warnings.
 const tfCosignDisableEnvVar = "TF_COSIGN_DISABLE"
 
-// Valid values for signing_format_mode
+// Valid values for signing_format_mode.
 const (
 	signingFormatModeLegacy  = "legacy"
 	signingFormatModeCurrent = "current"
