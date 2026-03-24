@@ -81,7 +81,7 @@ func PayloadHash(bundle *cbundle.RekorBundle) (v1.Hash, error) {
 	dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(body))
 	pe, err := models.UnmarshalProposedEntry(dec, runtime.JSONConsumer())
 	if err != nil {
-		return v1.Hash{}, fmt.Errorf("UnmarshaslProposedEntry: %w", err)
+		return v1.Hash{}, fmt.Errorf("UnmarshalProposedEntry: %w", err)
 	}
 
 	impl, err := rekortypes.UnmarshalEntry(pe)
