@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccResourceCosignAttest(t *testing.T) {
@@ -71,6 +72,8 @@ func TestAccResourceCosignAttest(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Attestations persist in the registry after destroy (by design).
+		CheckDestroy: func(*terraform.State) error { return nil },
 		Steps: []resource.TestStep{
 			// Attest and verify the first image.
 			{
@@ -137,6 +140,15 @@ data "cosign_verify" "bar" {
 					resource.TestMatchResourceAttr(
 						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
 				),
+			},
+
+			// Verify import works for the attest resource.
+			// Predicate fields and computed defaults cannot be reconstructed from import.
+			{
+				ResourceName:            "cosign_attest.foo",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"predicate_type", "predicate", "predicate_file", "predicates", "conflict", "fulcio_url", "rekor_url"},
 			},
 
 			// Update the resource to attest the second image (this time via a file!), and verify it.

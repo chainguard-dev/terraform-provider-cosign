@@ -143,7 +143,12 @@ func (r *CopyResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	digest, err := name.NewDigest(data.Source.ValueString())
+	// On import, source may not be set — derive it from id.
+	source := data.Source.ValueString()
+	if source == "" {
+		source = data.Id.ValueString()
+	}
+	digest, err := name.NewDigest(source)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse image digest: %v", err))
 		return
