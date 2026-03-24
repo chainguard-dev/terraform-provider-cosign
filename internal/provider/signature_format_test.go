@@ -13,9 +13,9 @@ func TestShouldPerformLegacy(t *testing.T) {
 		mode string
 		want bool
 	}{
-		{signingFormatModeLegacy, true},
-		{signingFormatModeCurrent, false},
-		{signingFormatModeBoth, true},
+		{signatureFormatLegacy, true},
+		{signatureFormatBundle, false},
+		{signatureFormatBoth, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -26,27 +26,27 @@ func TestShouldPerformLegacy(t *testing.T) {
 	}
 }
 
-func TestShouldPerformCurrent(t *testing.T) {
+func TestShouldPerformBundle(t *testing.T) {
 	tests := []struct {
 		mode string
 		want bool
 	}{
-		{signingFormatModeLegacy, false},
-		{signingFormatModeCurrent, true},
-		{signingFormatModeBoth, true},
+		{signatureFormatLegacy, false},
+		{signatureFormatBundle, true},
+		{signatureFormatBoth, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.mode, func(t *testing.T) {
-			if got := shouldPerformCurrent(tc.mode); got != tc.want {
-				t.Errorf("shouldPerformCurrent(%q) = %v, want %v", tc.mode, got, tc.want)
+			if got := shouldPerformBundle(tc.mode); got != tc.want {
+				t.Errorf("shouldPerformBundle(%q) = %v, want %v", tc.mode, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestSigningFormatModeValidator(t *testing.T) {
+func TestSignatureFormatValidator(t *testing.T) {
 	ctx := context.Background()
-	v := SigningFormatModeValidator{}
+	v := SignatureFormatValidator{}
 
 	tests := []struct {
 		name    string
@@ -54,7 +54,7 @@ func TestSigningFormatModeValidator(t *testing.T) {
 		wantErr bool
 	}{
 		{"legacy", types.StringValue("legacy"), false},
-		{"current", types.StringValue("current"), false},
+		{"bundle", types.StringValue("bundle"), false},
 		{"both", types.StringValue("both"), false},
 		{"invalid", types.StringValue("invalid"), true},
 		{"null", types.StringNull(), false},
@@ -78,8 +78,8 @@ func TestSigningFormatModeValidator(t *testing.T) {
 	}
 }
 
-func TestSigningFormatModeDescription(t *testing.T) {
-	v := SigningFormatModeValidator{}
+func TestSignatureFormatDescription(t *testing.T) {
+	v := SignatureFormatValidator{}
 	desc := v.Description(context.Background())
 	if desc == "" {
 		t.Error("expected non-empty description")
