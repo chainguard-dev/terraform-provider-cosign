@@ -31,7 +31,7 @@ data "cosign_verify" "example" {
 ### Optional
 
 - `default_attestation_entry_type` (String) Default Rekor entry type to use for attestations. Valid values are 'intoto' (default) or 'dsse'.
-- `signature_format` (String) The signature format to use for signing. Valid values are 'legacy' (default), 'bundle', or 'both'.
+- `default_signature_format` (String) Default signature format to use for signing. Valid values are 'legacy' (default), 'bundle', or 'both'. Can be overridden per-resource.
 
 ## Sign
 

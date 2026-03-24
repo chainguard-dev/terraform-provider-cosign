@@ -45,14 +45,14 @@ type Provider struct {
 // ProviderModel describes the provider data model.
 type ProviderModel struct {
 	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
-	SignatureFormat types.String `tfsdk:"signature_format"`
+	DefaultSignatureFormat types.String `tfsdk:"default_signature_format"`
 }
 
 type ProviderOpts struct {
 	ropts                       []remote.Option
 	keychain                    authn.Keychain
 	defaultAttestationEntryType string
-	signatureFormat           string
+	defaultSignatureFormat string
 
 	oidc fulcio.OIDCProvider
 
@@ -144,8 +144,8 @@ func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp 
 				Optional:            true,
 				Validators:          []validator.String{EntryTypeValidator{}},
 			},
-			"signature_format": schema.StringAttribute{
-				MarkdownDescription: fmt.Sprintf("The signature format to use for signing. Valid values are '%s' (default), '%s', or '%s'.",
+			"default_signature_format": schema.StringAttribute{
+				MarkdownDescription: fmt.Sprintf("Default signature format to use for signing. Valid values are '%s' (default), '%s', or '%s'. Can be overridden per-resource.",
 					signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth),
 				Optional:   true,
 				Validators: []validator.String{SignatureFormatValidator{}},
@@ -184,9 +184,9 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		attestationEntryType = data.DefaultAttestationEntryType.ValueString()
 	}
 
-	signatureFormat := signatureFormatLegacy
-	if !data.SignatureFormat.IsNull() && !data.SignatureFormat.IsUnknown() {
-		signatureFormat = data.SignatureFormat.ValueString()
+	defaultSignatureFormat := signatureFormatLegacy
+	if !data.DefaultSignatureFormat.IsNull() && !data.DefaultSignatureFormat.IsUnknown() {
+		defaultSignatureFormat = data.DefaultSignatureFormat.ValueString()
 	}
 
 	opts := &ProviderOpts{
@@ -194,7 +194,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		keychain:                    kc,
 		oidc:                        &oidcProvider{},
 		defaultAttestationEntryType: attestationEntryType,
-		signatureFormat:           signatureFormat,
+		defaultSignatureFormat:      defaultSignatureFormat,
 		signers:                     map[string]*fulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
 	}
