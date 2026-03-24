@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccResourceCosignSign(t *testing.T) {
@@ -65,6 +66,8 @@ func TestAccResourceCosignSign(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Signatures persist in the registry after destroy (by design).
+		CheckDestroy: func(*terraform.State) error { return nil },
 		Steps: []resource.TestStep{
 			// Sign and verify the first image.
 			{
@@ -110,6 +113,15 @@ data "cosign_verify" "bar" {
 					resource.TestMatchResourceAttr(
 						"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref1.String())),
 				),
+			},
+
+			// Verify import works for the sign resource.
+			// conflict, fulcio_url, rekor_url cannot be reconstructed from import.
+			{
+				ResourceName:            "cosign_sign.foo",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"conflict", "fulcio_url", "rekor_url"},
 			},
 
 			// Update the sign resource to sign the second image, and verify that.

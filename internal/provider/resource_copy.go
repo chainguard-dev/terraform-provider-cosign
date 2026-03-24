@@ -46,7 +46,7 @@ func (r *CopyResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *CopyResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "This copies the provided image digest cosign copy.",
+		MarkdownDescription: "This copies the provided image digest using cosign copy.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -89,7 +89,7 @@ func (r *CopyResource) Configure(_ context.Context, req resource.ConfigureReques
 
 	popts, ok := req.ProviderData.(*ProviderOpts)
 	if !ok || popts == nil {
-		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		resp.Diagnostics.AddError("Unexpected provider configuration", "Expected *ProviderOpts, got invalid provider data")
 		return
 	}
 	r.popts = popts
@@ -125,7 +125,7 @@ func (r *CopyResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	digest, err := r.doCopy(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("error while Copying", err.Error())
+		resp.Diagnostics.AddError("Error copying image", err.Error())
 		return
 	}
 
@@ -143,15 +143,20 @@ func (r *CopyResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	digest, err := name.NewDigest(data.Source.ValueString())
+	// On import, source may not be set — derive it from id.
+	source := data.Source.ValueString()
+	if source == "" {
+		source = data.Id.ValueString()
+	}
+	digest, err := name.NewDigest(source)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse image digest: %v", err))
+		resp.Diagnostics.AddError("Invalid image digest", fmt.Sprintf("Unable to parse image digest: %v", err))
 		return
 	}
 	data.Id = types.StringValue(digest.String())
 	data.CopiedRef = types.StringValue(digest.String())
 
-	// TODO(mattmoor): should we check that the Copyature didn't disappear?
+	// TODO(mattmoor): should we check that the copy didn't disappear?
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -165,7 +170,7 @@ func (r *CopyResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	digest, err := r.doCopy(ctx, data)
 	if err != nil {
-		resp.Diagnostics.AddError("error while Copying", err.Error())
+		resp.Diagnostics.AddError("Error copying image", err.Error())
 		return
 	}
 
@@ -176,14 +181,7 @@ func (r *CopyResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *CopyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var data *CopyResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// TODO: If we ever want to delete the image from the registry, we can do it here.
+func (r *CopyResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
 }
 
 func (r *CopyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccResourceCosignCopy(t *testing.T) {
@@ -39,6 +40,8 @@ func TestAccResourceCosignCopy(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Copied images persist in the registry after destroy (by design).
+		CheckDestroy: func(*terraform.State) error { return nil },
 		Steps: []resource.TestStep{{
 			// Sign and copy the image, then verify the copy's signature.
 			Config: fmt.Sprintf(`
@@ -107,6 +110,13 @@ data "cosign_verify" "copy" {
 					"data.cosign_verify.copy", "verified_ref", dst.Digest(dig1.String()).String(),
 				),
 			),
+		}, {
+			// Verify import works for the copy resource.
+			// source and destination cannot be reconstructed from import.
+			ResourceName:            "cosign_copy.copy",
+			ImportState:             true,
+			ImportStateVerify:       true,
+			ImportStateVerifyIgnore: []string{"source", "destination"},
 		}},
 	})
 }

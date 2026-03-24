@@ -10,9 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	// policy-controller v0.14.0 expects cosign v2 ociremote.Option in its Verify() signature,
-	// so this must stay on v2 until policy-controller upgrades to cosign v3.
-	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
+	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -73,7 +71,7 @@ func (d *VerifyDataSource) Configure(ctx context.Context, req datasource.Configu
 
 	popts, ok := req.ProviderData.(*ProviderOpts)
 	if !ok || popts == nil {
-		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		resp.Diagnostics.AddError("Unexpected provider configuration", "Expected *ProviderOpts, got invalid provider data")
 		return
 	}
 	d.popts = popts

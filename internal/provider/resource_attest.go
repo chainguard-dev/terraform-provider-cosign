@@ -253,7 +253,7 @@ func (r *AttestResource) Configure(ctx context.Context, req resource.ConfigureRe
 
 	popts, ok := req.ProviderData.(*ProviderOpts)
 	if !ok || popts == nil {
-		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		resp.Diagnostics.AddError("Unexpected provider configuration", "Expected *ProviderOpts, got invalid provider data")
 		return
 	}
 	r.popts = popts
@@ -330,6 +330,14 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			// and upon receiving io.EOF checks that things match.  That said,
 			// it is going to end up in memory for the attestation anyway, so
 			// we just read it all in here.
+			const maxPredicateSize = 10 << 20 // 10 MB
+			fi, err := os.Stat(path)
+			if err != nil {
+				return "", nil, fmt.Errorf("stat predicate file %q: %w", path, err)
+			}
+			if fi.Size() > maxPredicateSize {
+				return "", nil, fmt.Errorf("predicate file %q is %d bytes, exceeds maximum of %d bytes", path, fi.Size(), maxPredicateSize)
+			}
 			contents, err := os.ReadFile(path)
 			if err != nil {
 				return "", nil, err
@@ -402,10 +410,10 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
-		resp.Diagnostics.AddError("error while attesting", err.Error())
+		resp.Diagnostics.AddError("Error attesting image", err.Error())
 		return
 	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
-		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
+		resp.Diagnostics.AddWarning("Attestation skipped", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -422,11 +430,17 @@ func (r *AttestResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	digest, err := name.NewDigest(data.Image.ValueString())
+	// On import, image may not be set — derive it from id.
+	image := data.Image.ValueString()
+	if image == "" {
+		image = data.Id.ValueString()
+	}
+	digest, err := name.NewDigest(image)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse image digest: %v", err))
+		resp.Diagnostics.AddError("Invalid image digest", fmt.Sprintf("Unable to parse image digest: %v", err))
 		return
 	}
+	data.Image = types.StringValue(digest.String())
 	data.Id = types.StringValue(digest.String())
 	data.AttestedRef = types.StringValue(digest.String())
 
@@ -450,10 +464,10 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
-		resp.Diagnostics.AddError("error while attesting", err.Error())
+		resp.Diagnostics.AddError("Error attesting image", err.Error())
 		return
 	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
-		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
+		resp.Diagnostics.AddWarning("Attestation skipped", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -463,21 +477,14 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *AttestResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var data *AttestResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// TODO: If we ever want to delete the image from the registry, we can do it here.
+func (r *AttestResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
 }
 
 func (r *AttestResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// ConflictValidator is a string validator that checks that the string is valid OCI reference by digest.
+// ConflictValidator is a string validator that checks the conflict strategy is valid.
 type ConflictValidator struct{}
 
 var _ validator.String = ConflictValidator{}
