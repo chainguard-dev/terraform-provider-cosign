@@ -28,6 +28,7 @@ This attests the provided image digest with cosign.
 - `predicate_type` (String, Deprecated) The in-toto predicate type of the claim being attested.
 - `predicates` (Block List) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicates))
 - `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev).
+- `signature_format` (String) The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.
 
 ### Read-Only
 

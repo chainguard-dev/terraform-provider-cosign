@@ -64,9 +64,10 @@ type AttestResourceModel struct {
 
 	Predicates types.List `tfsdk:"predicates"`
 
-	AttestedRef types.String `tfsdk:"attested_ref"`
-	FulcioURL   types.String `tfsdk:"fulcio_url"`
-	RekorURL    types.String `tfsdk:"rekor_url"`
+	AttestedRef     types.String `tfsdk:"attested_ref"`
+	FulcioURL       types.String `tfsdk:"fulcio_url"`
+	RekorURL        types.String `tfsdk:"rekor_url"`
+	SignatureFormat types.String `tfsdk:"signature_format"`
 }
 
 func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -142,6 +143,12 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"signature_format": schema.StringAttribute{
+				MarkdownDescription: "The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.",
+				Optional:            true,
+				Validators:          []validator.String{SignatureFormatValidator{}},
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 		},
@@ -359,7 +366,12 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if shouldPerformLegacy(r.popts.signatureFormat) {
+	sigFmt := r.popts.defaultSignatureFormat
+	if !arm.SignatureFormat.IsNull() && !arm.SignatureFormat.IsUnknown() {
+		sigFmt = arm.SignatureFormat.ValueString()
+	}
+
+	if shouldPerformLegacy(sigFmt) {
 		sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating signer: %w", err)
@@ -372,7 +384,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 		}
 	}
-	if shouldPerformBundle(r.popts.signatureFormat) {
+	if shouldPerformBundle(sigFmt) {
 		bundleSigner, err := r.popts.getBundleSigner()
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)

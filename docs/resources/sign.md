@@ -24,6 +24,7 @@ This signs the provided image digest with cosign.
 - `conflict` (String) How to handle conflicting signature values
 - `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev).
 - `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev).
+- `signature_format` (String) The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.
 
 ### Read-Only
 

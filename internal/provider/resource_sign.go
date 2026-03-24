@@ -35,12 +35,13 @@ type SignResource struct {
 }
 
 type SignResourceModel struct {
-	Id        types.String `tfsdk:"id"`
-	Image     types.String `tfsdk:"image"`
-	Conflict  types.String `tfsdk:"conflict"`
-	SignedRef types.String `tfsdk:"signed_ref"`
-	FulcioURL types.String `tfsdk:"fulcio_url"`
-	RekorURL  types.String `tfsdk:"rekor_url"`
+	Id              types.String `tfsdk:"id"`
+	Image           types.String `tfsdk:"image"`
+	Conflict        types.String `tfsdk:"conflict"`
+	SignedRef       types.String `tfsdk:"signed_ref"`
+	FulcioURL       types.String `tfsdk:"fulcio_url"`
+	RekorURL        types.String `tfsdk:"rekor_url"`
+	SignatureFormat types.String `tfsdk:"signature_format"`
 }
 
 func (r *SignResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -96,6 +97,12 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
+			"signature_format": schema.StringAttribute{
+				MarkdownDescription: "The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.",
+				Optional:            true,
+				Validators:          []validator.String{SignatureFormatValidator{}},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
 		},
 	}
 }
@@ -133,7 +140,12 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	// TODO: This should probably be configurable?
 	var annotations map[string]any = nil
 
-	if shouldPerformLegacy(r.popts.signatureFormat) {
+	sigFmt := r.popts.defaultSignatureFormat
+	if !data.SignatureFormat.IsNull() && !data.SignatureFormat.IsUnknown() {
+		sigFmt = data.SignatureFormat.ValueString()
+	}
+
+	if shouldPerformLegacy(sigFmt) {
 		sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating signer: %w", err)
@@ -146,7 +158,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 			return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
 		}
 	}
-	if shouldPerformBundle(r.popts.signatureFormat) {
+	if shouldPerformBundle(sigFmt) {
 		bundleSigner, err := r.popts.getBundleSigner()
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
