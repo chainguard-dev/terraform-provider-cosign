@@ -251,7 +251,7 @@ func (r *AttestResource) Configure(ctx context.Context, req resource.ConfigureRe
 
 	popts, ok := req.ProviderData.(*ProviderOpts)
 	if !ok || popts == nil {
-		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		resp.Diagnostics.AddError("Unexpected provider configuration", "Expected *ProviderOpts, got invalid provider data")
 		return
 	}
 	r.popts = popts
@@ -384,10 +384,10 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
-		resp.Diagnostics.AddError("error while attesting", err.Error())
+		resp.Diagnostics.AddError("Error attesting image", err.Error())
 		return
 	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
-		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
+		resp.Diagnostics.AddWarning("Attestation skipped", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -406,7 +406,7 @@ func (r *AttestResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse image digest: %v", err))
+		resp.Diagnostics.AddError("Invalid image digest", fmt.Sprintf("Unable to parse image digest: %v", err))
 		return
 	}
 	data.Id = types.StringValue(digest.String())
@@ -432,10 +432,10 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
-		resp.Diagnostics.AddError("error while attesting", err.Error())
+		resp.Diagnostics.AddError("Error attesting image", err.Error())
 		return
 	} else if warning != nil && os.Getenv(tfCosignDisableEnvVar) == "" {
-		resp.Diagnostics.AddWarning("warning while attesting", warning.Error())
+		resp.Diagnostics.AddWarning("Attestation skipped", warning.Error())
 	}
 
 	data.Id = types.StringValue(digest)
@@ -445,21 +445,14 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *AttestResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var data *AttestResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// TODO: If we ever want to delete the image from the registry, we can do it here.
+func (r *AttestResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
 }
 
 func (r *AttestResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// ConflictValidator is a string validator that checks that the string is valid OCI reference by digest.
+// ConflictValidator is a string validator that checks the conflict strategy is valid.
 type ConflictValidator struct{}
 
 var _ validator.String = ConflictValidator{}

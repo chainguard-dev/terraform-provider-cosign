@@ -73,7 +73,7 @@ func (d *VerifyDataSource) Configure(ctx context.Context, req datasource.Configu
 
 	popts, ok := req.ProviderData.(*ProviderOpts)
 	if !ok || popts == nil {
-		resp.Diagnostics.AddError("Client Error", "invalid provider data")
+		resp.Diagnostics.AddError("Unexpected provider configuration", "Expected *ProviderOpts, got invalid provider data")
 		return
 	}
 	d.popts = popts
