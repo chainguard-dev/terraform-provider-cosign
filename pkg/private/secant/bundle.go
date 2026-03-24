@@ -22,10 +22,10 @@ import (
 )
 
 // BundleSigner holds the materials needed for the v3 "bundle" signing path.
-// It generates an ephemeral keypair and fetches an OIDC token exactly once,
-// then reuses them across all signing/attesting operations. This mirrors
-// the legacy secant fulcio.SignerVerifier design where a single key+cert
-// is generated and reused.
+// The ephemeral keypair is generated once and reused across all operations.
+// The OIDC token is fetched via the OIDCProvider on each sign; the provider
+// handles caching with a TTL so that back-to-back calls share one auth
+// prompt while long-separated calls get a fresh token.
 type BundleSigner struct {
 	oidc            fulcio.OIDCProvider
 	signingConfig   *root.SigningConfig
@@ -33,12 +33,11 @@ type BundleSigner struct {
 
 	once    sync.Once
 	keypair sign.Keypair
-	idToken string
 	initErr error
 }
 
 // NewBundleSigner loads SigningConfig and TrustedMaterial from TUF and returns
-// a BundleSigner that will lazily authenticate on first use.
+// a BundleSigner that will lazily generate a keypair on first use.
 func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
 	sc, err := cosign.SigningConfig()
 	if err != nil {
@@ -55,17 +54,12 @@ func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
 	}, nil
 }
 
-// init lazily generates the ephemeral keypair and fetches the OIDC token exactly once.
-func (bs *BundleSigner) init(ctx context.Context) error {
+// init lazily generates the ephemeral keypair exactly once.
+func (bs *BundleSigner) init() error {
 	bs.once.Do(func() {
 		bs.keypair, bs.initErr = sign.NewEphemeralKeypair(nil)
 		if bs.initErr != nil {
 			bs.initErr = fmt.Errorf("generating ephemeral keypair: %w", bs.initErr)
-			return
-		}
-		bs.idToken, bs.initErr = bs.oidc.Provide(ctx, "sigstore")
-		if bs.initErr != nil {
-			bs.initErr = fmt.Errorf("retrieving ID token: %w", bs.initErr)
 		}
 	})
 	return bs.initErr
@@ -73,12 +67,17 @@ func (bs *BundleSigner) init(ctx context.Context) error {
 
 // SignContent creates a protobuf bundle by signing the given content.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
-	if err := bs.init(ctx); err != nil {
+	if err := bs.init(); err != nil {
 		return nil, err
 	}
 
+	idToken, err := bs.oidc.Provide(ctx, "sigstore")
+	if err != nil {
+		return nil, fmt.Errorf("retrieving ID token: %w", err)
+	}
+
 	signOpts := cbundle.SignOptions{}
-	bundle, err := cbundle.SignData(ctx, content, bs.keypair, bs.idToken, nil, bs.signingConfig, bs.trustedMaterial, signOpts)
+	bundle, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, bs.signingConfig, bs.trustedMaterial, signOpts)
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
