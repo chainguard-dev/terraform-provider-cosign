@@ -45,14 +45,14 @@ type Provider struct {
 // ProviderModel describes the provider data model.
 type ProviderModel struct {
 	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
-	DefaultSignatureFormat types.String `tfsdk:"default_signature_format"`
+	DefaultSignatureFormat      types.String `tfsdk:"default_signature_format"`
 }
 
 type ProviderOpts struct {
 	ropts                       []remote.Option
 	keychain                    authn.Keychain
 	defaultAttestationEntryType string
-	defaultSignatureFormat string
+	defaultSignatureFormat      string
 
 	oidc fulcio.OIDCProvider
 
