@@ -73,6 +73,9 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 // AttestEntity is roughly equivalent to cosign attest.
 // It operates on the provided oci.SignedEntity without interacting with the registry.
 func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, opts ...AttestOption) (oci.SignedEntity, error) {
+	if len(statements) == 0 {
+		return se, nil
+	}
 	attestOpts, err := makeAttestOptions(opts)
 	if err != nil {
 		return nil, fmt.Errorf("initializing attest options: %w", err)
@@ -216,6 +219,9 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 // Attest is roughly equivalent to cosign attest.
 // The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
 func Attest(ctx context.Context, conflict string, statements []*types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option, opts ...AttestOption) error {
+	if len(statements) == 0 {
+		return nil
+	}
 	digest := statements[0].Digest
 
 	// We don't actually need to access the remote entity to attach things to it

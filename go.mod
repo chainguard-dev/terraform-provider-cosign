@@ -20,6 +20,7 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.10.0
 	github.com/hashicorp/terraform-plugin-testing v1.15.0
 	github.com/secure-systems-lab/go-securesystemslib v0.10.0
+	github.com/sigstore/cosign/v2 v2.6.2
 	github.com/sigstore/cosign/v3 v3.0.5
 	github.com/sigstore/fulcio v1.8.5
 	github.com/sigstore/policy-controller v0.14.1-0.20260320111758-65ad92569d69
