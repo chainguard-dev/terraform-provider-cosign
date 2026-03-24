@@ -178,11 +178,17 @@ func (r *SignResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	digest, err := name.NewDigest(data.Image.ValueString())
+	// On import, image may not be set — derive it from id.
+	image := data.Image.ValueString()
+	if image == "" {
+		image = data.Id.ValueString()
+	}
+	digest, err := name.NewDigest(image)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid image digest", fmt.Sprintf("Unable to parse image digest: %v", err))
 		return
 	}
+	data.Image = types.StringValue(digest.String())
 	data.Id = types.StringValue(digest.String())
 	data.SignedRef = types.StringValue(digest.String())
 
