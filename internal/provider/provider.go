@@ -28,11 +28,11 @@ import (
 // and silences any associated warnings.
 const tfCosignDisableEnvVar = "TF_COSIGN_DISABLE"
 
-// Valid values for signing_format_mode.
+// Valid values for signature_format.
 const (
-	signingFormatModeLegacy  = "legacy"
-	signingFormatModeCurrent = "current"
-	signingFormatModeBoth    = "both"
+	signatureFormatLegacy = "legacy"
+	signatureFormatBundle = "bundle"
+	signatureFormatBoth   = "both"
 )
 
 // Ensure Provider satisfies various provider interfaces.
@@ -45,14 +45,14 @@ type Provider struct {
 // ProviderModel describes the provider data model.
 type ProviderModel struct {
 	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
-	SigningFormatMode           types.String `tfsdk:"signing_format_mode"`
+	SignatureFormat types.String `tfsdk:"signature_format"`
 }
 
 type ProviderOpts struct {
 	ropts                       []remote.Option
 	keychain                    authn.Keychain
 	defaultAttestationEntryType string
-	signingFormatMode           string
+	signatureFormat           string
 
 	oidc fulcio.OIDCProvider
 
@@ -64,7 +64,7 @@ type ProviderOpts struct {
 	// Keyed off rekor URL.
 	rekorClients map[string]*client.Rekor
 
-	// Lazily initialized bundle signer for the "current" signing path.
+	// Lazily initialized bundle signer for the "bundle" signing path.
 	// Cached at the provider level so that the ephemeral keypair and OIDC token
 	// are generated at most once across all sign/attest resource operations.
 	bundleSigner *secant.BundleSigner
@@ -144,11 +144,11 @@ func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp 
 				Optional:            true,
 				Validators:          []validator.String{EntryTypeValidator{}},
 			},
-			"signing_format_mode": schema.StringAttribute{
-				MarkdownDescription: fmt.Sprintf("The mode for signing format. Valid values are '%s' (default), '%s', or '%s'.",
-					signingFormatModeLegacy, signingFormatModeCurrent, signingFormatModeBoth),
+			"signature_format": schema.StringAttribute{
+				MarkdownDescription: fmt.Sprintf("The signature format to use for signing. Valid values are '%s' (default), '%s', or '%s'.",
+					signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth),
 				Optional:   true,
-				Validators: []validator.String{SigningFormatModeValidator{}},
+				Validators: []validator.String{SignatureFormatValidator{}},
 			},
 		},
 	}
@@ -184,9 +184,9 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		attestationEntryType = data.DefaultAttestationEntryType.ValueString()
 	}
 
-	signingFormatMode := signingFormatModeLegacy
-	if !data.SigningFormatMode.IsNull() && !data.SigningFormatMode.IsUnknown() {
-		signingFormatMode = data.SigningFormatMode.ValueString()
+	signatureFormat := signatureFormatLegacy
+	if !data.SignatureFormat.IsNull() && !data.SignatureFormat.IsUnknown() {
+		signatureFormat = data.SignatureFormat.ValueString()
 	}
 
 	opts := &ProviderOpts{
@@ -194,7 +194,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		keychain:                    kc,
 		oidc:                        &oidcProvider{},
 		defaultAttestationEntryType: attestationEntryType,
-		signingFormatMode:           signingFormatMode,
+		signatureFormat:           signatureFormat,
 		signers:                     map[string]*fulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
 	}
@@ -253,37 +253,37 @@ func (v EntryTypeValidator) ValidateString(ctx context.Context, req validator.St
 	}
 }
 
-// SigningFormatModeValidator is a string validator that checks that the string is a valid signing format mode.
-type SigningFormatModeValidator struct{}
+// SignatureFormatValidator is a string validator that checks that the string is a valid signature format.
+type SignatureFormatValidator struct{}
 
-var _ validator.String = SigningFormatModeValidator{}
+var _ validator.String = SignatureFormatValidator{}
 
-func (v SigningFormatModeValidator) Description(context.Context) string {
-	return fmt.Sprintf("value must be one of (`%s`, `%s`, `%s`)", signingFormatModeLegacy, signingFormatModeCurrent, signingFormatModeBoth)
+func (v SignatureFormatValidator) Description(context.Context) string {
+	return fmt.Sprintf("value must be one of (`%s`, `%s`, `%s`)", signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth)
 }
 
-func (v SigningFormatModeValidator) MarkdownDescription(ctx context.Context) string {
+func (v SignatureFormatValidator) MarkdownDescription(ctx context.Context) string {
 	return v.Description(ctx)
 }
 
-func (v SigningFormatModeValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+func (v SignatureFormatValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
 	val := req.ConfigValue.ValueString()
 
 	switch val {
-	case signingFormatModeLegacy, signingFormatModeCurrent, signingFormatModeBoth:
+	case signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth:
 		return
 	default:
-		resp.Diagnostics.AddError("error validating signing_format_mode", v.Description(ctx))
+		resp.Diagnostics.AddError("error validating signature_format", v.Description(ctx))
 	}
 }
 
-func shouldPerformLegacy(signingFormatMode string) bool {
-	return slices.Contains([]string{signingFormatModeLegacy, signingFormatModeBoth}, signingFormatMode)
+func shouldPerformLegacy(signatureFormat string) bool {
+	return slices.Contains([]string{signatureFormatLegacy, signatureFormatBoth}, signatureFormat)
 }
 
-func shouldPerformCurrent(signingFormatMode string) bool {
-	return slices.Contains([]string{signingFormatModeCurrent, signingFormatModeBoth}, signingFormatMode)
+func shouldPerformBundle(signatureFormat string) bool {
+	return slices.Contains([]string{signatureFormatBundle, signatureFormatBoth}, signatureFormat)
 }

@@ -359,7 +359,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	if shouldPerformLegacy(r.popts.signingFormatMode) {
+	if shouldPerformLegacy(r.popts.signatureFormat) {
 		sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating signer: %w", err)
@@ -372,7 +372,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 		}
 	}
-	if shouldPerformCurrent(r.popts.signingFormatMode) {
+	if shouldPerformBundle(r.popts.signatureFormat) {
 		bundleSigner, err := r.popts.getBundleSigner()
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)

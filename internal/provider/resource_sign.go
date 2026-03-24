@@ -133,7 +133,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	// TODO: This should probably be configurable?
 	var annotations map[string]any = nil
 
-	if shouldPerformLegacy(r.popts.signingFormatMode) {
+	if shouldPerformLegacy(r.popts.signatureFormat) {
 		sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating signer: %w", err)
@@ -146,7 +146,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 			return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
 		}
 	}
-	if shouldPerformCurrent(r.popts.signingFormatMode) {
+	if shouldPerformBundle(r.popts.signatureFormat) {
 		bundleSigner, err := r.popts.getBundleSigner()
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
