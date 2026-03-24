@@ -282,7 +282,7 @@ func toPredObject(data *AttestResourceModel) *PredicateObject {
 	return nil
 }
 
-func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel, preds []PredicateObject, legacy bool) (string, error, error) {
+func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel, preds []PredicateObject) (string, error, error) {
 	digest, err := name.NewDigest(arm.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("unable to parse image digest")
@@ -344,13 +344,14 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			return "", nil, errors.New("one of predicate or predicate_file must be specified")
 		}
 
-		if legacy {
+		if shouldPerformLegacy(r.popts.signingFormatMode) {
 			stmt, err := legacySecant.NewStatement(digest, reader, data.PredicateType.ValueString())
 			if err != nil {
-				return "", nil, fmt.Errorf("creating attestation statement: %w", err)
+				return "", nil, fmt.Errorf("creating legacy attestation statement: %w", err)
 			}
 			legacyStatements = append(legacyStatements, stmt)
-		} else {
+		}
+		if shouldPerformCurrent(r.popts.signingFormatMode) {
 			stmt, err := secant.NewStatement(digest, reader, data.PredicateType.ValueString())
 			if err != nil {
 				return "", nil, fmt.Errorf("creating attestation statement: %w", err)
@@ -372,14 +373,15 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
-	var attestErr error
-	if legacy {
-		attestErr = legacySecant.Attest(ctx, arm.Conflict.ValueString(), legacyStatements, legacySv, rekorClient, r.popts.withContext(ctx), legacySecant.WithRekorEntryType(r.popts.defaultAttestationEntryType))
-	} else {
-		attestErr = secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType))
+	if shouldPerformLegacy(r.popts.signingFormatMode) {
+		if err := legacySecant.Attest(ctx, arm.Conflict.ValueString(), legacyStatements, legacySv, rekorClient, r.popts.withContext(ctx), legacySecant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+			return "", nil, fmt.Errorf("unable to legacy attest image %q: %w", digest.String(), err)
+		}
 	}
-	if attestErr != nil {
-		return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
+	if shouldPerformCurrent(r.popts.signingFormatMode) {
+		if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
+		}
 	}
 
 	return digest.String(), nil, nil
@@ -398,8 +400,7 @@ func (r *AttestResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// TODO: add configurable options for legacy/latest/both
-	digest, warning, err := r.doAttest(ctx, data, preds, false)
+	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
@@ -447,8 +448,7 @@ func (r *AttestResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// TODO: add configurable options for legacy/latest/both
-	digest, warning, err := r.doAttest(ctx, data, preds, false)
+	digest, warning, err := r.doAttest(ctx, data, preds)
 	if err != nil {
 		resp.Diagnostics.AddError("error while attesting", err.Error())
 		return
