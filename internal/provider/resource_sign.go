@@ -115,7 +115,7 @@ func (r *SignResource) Configure(ctx context.Context, req resource.ConfigureRequ
 	r.popts = popts
 }
 
-func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel, legacy bool) (string, error, error) {
+func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (string, error, error) {
 	digest, err := name.NewDigest(data.Image.ValueString())
 	if err != nil {
 		return "", nil, errors.New("unable to parse image digest")
@@ -144,15 +144,17 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel, lega
 	// TODO: This should probably be configurable?
 	var annotations map[string]any = nil
 
-	var signErr error
-	if legacy {
-		signErr = legacySecant.Sign(ctx, data.Conflict.ValueString(), annotations, legacySv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx))
-	} else {
-		signErr = secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx))
+	if shouldPerformLegacy(r.popts.signingFormatMode) {
+		if err := legacySecant.Sign(ctx, data.Conflict.ValueString(), annotations, legacySv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to legacy sign image %q: %w", digest.String(), err)
+		}
 	}
-	if signErr != nil {
-		return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), signErr)
+	if shouldPerformCurrent(r.popts.signingFormatMode) {
+		if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
+		}
 	}
+
 	return digest.String(), nil, nil
 }
 
@@ -163,8 +165,7 @@ func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	// TODO: add configurable options for legacy/latest/both
-	digest, warning, err := r.doSign(ctx, data, false)
+	digest, warning, err := r.doSign(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("Error signing image", err.Error())
 		return
@@ -212,8 +213,7 @@ func (r *SignResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	// TODO: add configurable options for legacy/latest/both
-	digest, warning, err := r.doSign(ctx, data, false)
+	digest, warning, err := r.doSign(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("Error signing image", err.Error())
 		return
