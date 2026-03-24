@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
-	legacySecant "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/legacy"
 	"github.com/chainguard-dev/terraform-provider-oci/pkg/validators"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -128,16 +127,6 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing"), nil
 	}
 
-	sv, legacySv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating signer: %w", err)
-	}
-
-	rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating rekor client: %w", err)
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
 	defer cancel()
 
@@ -145,13 +134,25 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	var annotations map[string]any = nil
 
 	if shouldPerformLegacy(r.popts.signingFormatMode) {
-		if err := legacySecant.Sign(ctx, data.Conflict.ValueString(), annotations, legacySv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
-			return "", nil, fmt.Errorf("unable to legacy sign image %q: %w", digest.String(), err)
+		sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating signer: %w", err)
+		}
+		rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating rekor client: %w", err)
+		}
+		if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
 		}
 	}
 	if shouldPerformCurrent(r.popts.signingFormatMode) {
-		if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
-			return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
+		bundleSigner, err := r.popts.getBundleSigner()
+		if err != nil {
+			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
+		}
+		if err := secant.SignBundle(ctx, annotations, bundleSigner, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to sign image %q (bundle): %w", digest.String(), err)
 		}
 	}
 

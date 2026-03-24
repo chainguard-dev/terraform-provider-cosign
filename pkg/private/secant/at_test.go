@@ -14,6 +14,91 @@ import (
 	"github.com/sigstore/cosign/v3/pkg/cosign/bundle"
 )
 
+func TestNewStatement(t *testing.T) {
+	digest, err := name.NewDigest("example.com/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"key": "value"}`)
+	stmt, err := NewStatement(digest, bytes.NewReader(body), "https://example.com/predicate")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stmt.Digest.String() != digest.String() {
+		t.Errorf("got digest %q, want %q", stmt.Digest.String(), digest.String())
+	}
+	if stmt.Type != "https://example.com/predicate" {
+		t.Errorf("got type %q, want %q", stmt.Type, "https://example.com/predicate")
+	}
+	if len(stmt.Payload) == 0 {
+		t.Error("expected non-empty payload")
+	}
+
+	// A second call with the same predicate bytes should produce an identical statement.
+	stmt2, err := NewStatement(digest, bytes.NewReader(body), "https://example.com/predicate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stmt.Payload, stmt2.Payload) {
+		t.Error("expected identical payloads for identical inputs")
+	}
+}
+
+func TestNewStatementShortPredicateType(t *testing.T) {
+	digest, err := name.NewDigest("example.com/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a short predicate type name that maps to a URI.
+	body := []byte(`{"key": "value"}`)
+	stmt, err := NewStatement(digest, bytes.NewReader(body), "spdx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stmt.Type != "spdx" {
+		t.Errorf("got type %q, want %q", stmt.Type, "spdx")
+	}
+}
+
+func TestParsePredicateType(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"custom", "https://cosign.sigstore.dev/attestation/v1", false},
+		{"slsaprovenance", "https://slsa.dev/provenance/v0.2", false},
+		{"spdx", "https://spdx.dev/Document", false},
+		{"spdxjson", "https://spdx.dev/Document", false},
+		{"cyclonedx", "https://cyclonedx.org/bom", false},
+		{"link", "https://in-toto.io/Link/v1", false},
+		{"vuln", "https://cosign.sigstore.dev/attestation/vuln/v1", false},
+		{"https://example.com/custom", "https://example.com/custom", false},
+		{"not-a-url-or-known-type", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := parsePredicateType(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error for %q, got none", tc.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error for %q: %v", tc.input, err)
+				return
+			}
+			if got != tc.want {
+				t.Errorf("parsePredicateType(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewStatements(t *testing.T) {
 	digest, err := name.NewDigest("example.com/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
