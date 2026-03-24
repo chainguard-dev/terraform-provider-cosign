@@ -360,6 +360,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		if err != nil {
 			return "", nil, fmt.Errorf("creating attestation statement: %w", err)
 		}
+
 		statements = append(statements, stmt)
 	}
 

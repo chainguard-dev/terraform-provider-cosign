@@ -167,7 +167,6 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 			return "", nil, fmt.Errorf("unable to sign image %q (bundle): %w", digest.String(), err)
 		}
 	}
-
 	return digest.String(), nil, nil
 }
 
