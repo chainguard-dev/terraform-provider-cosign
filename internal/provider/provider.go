@@ -100,13 +100,12 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier,
 		return nil, err
 	}
 	fulcioClient := api.NewClient(furl, api.WithUserAgent("terraform-provider-cosign"))
-
 	sv, err := fulcio.NewSigner(p.oidc, fulcioClient)
 	if err != nil {
 		return nil, err
 	}
-	p.signers[fulcioUrl] = sv
 
+	p.signers[fulcioUrl] = sv
 	return sv, nil
 }
 
