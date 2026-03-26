@@ -1,17 +1,20 @@
-package secant
+package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/url"
 	"strings"
 	"sync"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
-	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
+	"github.com/sigstore/cosign/v3/pkg/cosign/attestation"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	ctypes "github.com/sigstore/cosign/v3/pkg/types"
@@ -21,13 +24,16 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// BundleSigner holds the materials needed for the v3 "bundle" signing path.
+// OIDCProvider furnishes OIDC tokens for keyless signing.
+type OIDCProvider interface {
+	Enabled(ctx context.Context) bool
+	Provide(ctx context.Context, audience string) (string, error)
+}
+
+// bundleSigner holds the materials needed for the cosign v3 bundle signing path.
 // The ephemeral keypair is generated once and reused across all operations.
-// The OIDC token is fetched via the OIDCProvider on each sign; the provider
-// handles caching with a TTL so that back-to-back calls share one auth
-// prompt while long-separated calls get a fresh token.
-type BundleSigner struct {
-	oidc            fulcio.OIDCProvider
+type bundleSigner struct {
+	oidc            OIDCProvider
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
 
@@ -36,9 +42,8 @@ type BundleSigner struct {
 	initErr error
 }
 
-// NewBundleSigner loads SigningConfig and TrustedMaterial from TUF and returns
-// a BundleSigner that will lazily generate a keypair on first use.
-func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
+// newBundleSigner loads SigningConfig and TrustedMaterial from TUF.
+func newBundleSigner(oidc OIDCProvider) (*bundleSigner, error) {
 	sc, err := cosign.SigningConfig()
 	if err != nil {
 		return nil, fmt.Errorf("loading signing config from TUF: %w", err)
@@ -47,7 +52,7 @@ func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading trusted root from TUF: %w", err)
 	}
-	return &BundleSigner{
+	return &bundleSigner{
 		oidc:            oidc,
 		signingConfig:   sc,
 		trustedMaterial: tr,
@@ -55,7 +60,7 @@ func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
 }
 
 // init lazily generates the ephemeral keypair exactly once.
-func (bs *BundleSigner) init() error {
+func (bs *bundleSigner) init() error {
 	bs.once.Do(func() {
 		bs.keypair, bs.initErr = sign.NewEphemeralKeypair(nil)
 		if bs.initErr != nil {
@@ -65,8 +70,8 @@ func (bs *BundleSigner) init() error {
 	return bs.initErr
 }
 
-// SignContent creates a protobuf bundle by signing the given content.
-func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
+// signContent creates a protobuf bundle by signing the given content.
+func (bs *bundleSigner) signContent(ctx context.Context, content sign.Content) ([]byte, error) {
 	if err := bs.init(); err != nil {
 		return nil, err
 	}
@@ -76,17 +81,16 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 		return nil, fmt.Errorf("retrieving ID token: %w", err)
 	}
 
-	signOpts := cbundle.SignOptions{}
-	bundle, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, bs.signingConfig, bs.trustedMaterial, signOpts)
+	bundle, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
 	return bundle, nil
 }
 
-// SignBundle signs container images using the v3 bundle format and writes them as OCI referrers.
-// The BundleSigner's cached credentials are reused across all images.
-func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleSigner, imgs []name.Digest, ropt []remote.Option) error {
+// signBundle signs container images using the cosign v3 bundle format
+// and writes them as OCI referrers.
+func signBundle(ctx context.Context, annotations map[string]any, signer *bundleSigner, imgs []name.Digest, ropt []remote.Option) error {
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, digest := range imgs {
@@ -118,7 +122,7 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 			PayloadType: ctypes.IntotoPayloadType,
 		}
 
-		bundleBytes, err := signer.SignContent(ctx, content)
+		bundleBytes, err := signer.signContent(ctx, content)
 		if err != nil {
 			return fmt.Errorf("signing bundle for %q: %w", digest.String(), err)
 		}
@@ -131,18 +135,69 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 	return nil
 }
 
-// AttestBundle creates attestations using the v3 bundle format and writes them as OCI referrers.
-// The BundleSigner's cached credentials are reused across all statements.
-func AttestBundle(ctx context.Context, statements []*types.Statement, signer *BundleSigner, ropt []remote.Option, opts ...AttestOption) error {
+// attestStatement holds the data needed to write a single attestation bundle.
+type attestStatement struct {
+	Digest  name.Digest
+	Type    string
+	Payload []byte
+}
+
+// newAttestStatement generates an in-toto statement for use in attestBundle.
+func newAttestStatement(digest name.Digest, predicate io.Reader, ptype string) (*attestStatement, error) {
+	h, err := v1.NewHash(digest.Identifier())
+	if err != nil {
+		return nil, err
+	}
+
+	sh, err := attestation.GenerateStatement(attestation.GenerateOpts{
+		Predicate: predicate,
+		Type:      ptype,
+		Digest:    h.Hex,
+		Repo:      digest.Repository.String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	payload, err := json.Marshal(sh)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling statement: %w", err)
+	}
+
+	return &attestStatement{
+		Digest:  digest,
+		Type:    ptype,
+		Payload: payload,
+	}, nil
+}
+
+var predicateTypeMap = map[string]string{
+	"custom":         "https://cosign.sigstore.dev/attestation/v1",
+	"slsaprovenance": "https://slsa.dev/provenance/v0.2",
+	"spdx":           "https://spdx.dev/Document",
+	"spdxjson":       "https://spdx.dev/Document",
+	"cyclonedx":      "https://cyclonedx.org/bom",
+	"link":           "https://in-toto.io/Link/v1",
+	"vuln":           "https://cosign.sigstore.dev/attestation/vuln/v1",
+}
+
+func parsePredicateType(t string) (string, error) {
+	uri, ok := predicateTypeMap[t]
+	if !ok {
+		if _, err := url.ParseRequestURI(t); err != nil {
+			return "", fmt.Errorf("invalid predicate type: %s", t)
+		}
+		uri = t
+	}
+	return uri, nil
+}
+
+// attestBundle creates attestations using the cosign v3 bundle format
+// and writes them as OCI referrers.
+func attestBundle(ctx context.Context, statements []*attestStatement, signer *bundleSigner, ropt []remote.Option) error {
 	if len(statements) == 0 {
 		return nil
 	}
-
-	attestOpts, err := makeAttestOptions(opts)
-	if err != nil {
-		return fmt.Errorf("initializing attest options: %w", err)
-	}
-	_ = attestOpts // rekorEntryType is not used in the bundle path
 
 	ociOpts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
@@ -152,7 +207,7 @@ func AttestBundle(ctx context.Context, statements []*types.Statement, signer *Bu
 			PayloadType: ctypes.IntotoPayloadType,
 		}
 
-		bundleBytes, err := signer.SignContent(ctx, content)
+		bundleBytes, err := signer.signContent(ctx, content)
 		if err != nil {
 			return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
 		}

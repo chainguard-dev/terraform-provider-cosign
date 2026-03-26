@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -54,7 +53,7 @@ type ProviderOpts struct {
 	defaultAttestationEntryType string
 	defaultSignatureFormat      string
 
-	oidc fulcio.OIDCProvider
+	oidc OIDCProvider
 
 	sync.Mutex
 
@@ -67,7 +66,7 @@ type ProviderOpts struct {
 	// Lazily initialized bundle signer for the "bundle" signing path.
 	// Cached at the provider level so that the ephemeral keypair and OIDC token
 	// are generated at most once across all sign/attest resource operations.
-	bundleSigner *secant.BundleSigner
+	bs *bundleSigner
 }
 
 func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
@@ -109,19 +108,19 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier,
 	return sv, nil
 }
 
-func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
+func (p *ProviderOpts) getBundleSigner() (*bundleSigner, error) {
 	p.Lock()
 	defer p.Unlock()
 
-	if p.bundleSigner != nil {
-		return p.bundleSigner, nil
+	if p.bs != nil {
+		return p.bs, nil
 	}
 
-	bs, err := secant.NewBundleSigner(p.oidc)
+	bs, err := newBundleSigner(p.oidc)
 	if err != nil {
 		return nil, err
 	}
-	p.bundleSigner = bs
+	p.bs = bs
 
 	return bs, nil
 }
