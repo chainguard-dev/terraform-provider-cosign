@@ -24,7 +24,7 @@ require (
 	github.com/sigstore/fulcio v1.8.5
 	github.com/sigstore/policy-controller v0.14.1-0.20260320111758-65ad92569d69
 	github.com/sigstore/rekor v1.5.1
-	github.com/sigstore/sigstore v1.10.4
+	github.com/sigstore/sigstore v1.10.5
 	github.com/transparency-dev/merkle v0.0.2
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
@@ -220,7 +220,7 @@ require (
 	github.com/lestrrat-go/jwx/v3 v3.0.12 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
-	github.com/letsencrypt/boulder v0.20251110.0 // indirect
+	github.com/letsencrypt/boulder v0.20260223.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
