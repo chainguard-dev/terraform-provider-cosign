@@ -890,8 +890,8 @@ github.com/sigstore/cosign/v3 v3.0.5 h1:c1zPqjU+H4wmirgysC+AkWMg7a7fykyOYF/m+F11
 github.com/sigstore/cosign/v3 v3.0.5/go.mod h1:ble1vMvJagCFyTIDkibCq6MIHiWDw00JNYl0f9rB4T4=
 github.com/sigstore/fulcio v1.8.5 h1:HYTD1/L5wlBp8JxsWxUf8hmfaNBBF/x3r3p5l6tZwbA=
 github.com/sigstore/fulcio v1.8.5/go.mod h1:tSLYK3JsKvJpDW1BsIsVHZgHj+f8TjXARzqIUWSsSPQ=
-github.com/sigstore/policy-controller v0.14.1-0.20260320111758-65ad92569d69 h1:LmdfAF7HKMkm7v+71XufzyO2xvPr691GYO/Q6YRh9Is=
-github.com/sigstore/policy-controller v0.14.1-0.20260320111758-65ad92569d69/go.mod h1:x4ZpgpMqzY+jLUNIQ4Zfq8tuGHZnMWzI86FnZOw0E8A=
+github.com/sigstore/policy-controller v0.15.1 h1:DL1YJ7RXbhPLteaxn/HUZFEf32UNqqkPoHN6leekETc=
+github.com/sigstore/policy-controller v0.15.1/go.mod h1:x4ZpgpMqzY+jLUNIQ4Zfq8tuGHZnMWzI86FnZOw0E8A=
 github.com/sigstore/protobuf-specs v0.5.0 h1:F8YTI65xOHw70NrvPwJ5PhAzsvTnuJMGLkA4FIkofAY=
 github.com/sigstore/protobuf-specs v0.5.0/go.mod h1:+gXR+38nIa2oEupqDdzg4qSBT0Os+sP7oYv6alWewWc=
 github.com/sigstore/rekor v1.5.1 h1:Ca1egHRWRuDvXV4tZu9aXEXc3Gej9FG+HKeapV9OAMQ=

@@ -22,7 +22,7 @@ require (
 	github.com/secure-systems-lab/go-securesystemslib v0.10.0
 	github.com/sigstore/cosign/v3 v3.0.5
 	github.com/sigstore/fulcio v1.8.5
-	github.com/sigstore/policy-controller v0.14.1-0.20260320111758-65ad92569d69
+	github.com/sigstore/policy-controller v0.15.1
 	github.com/sigstore/rekor v1.5.1
 	github.com/sigstore/sigstore v1.10.5
 	github.com/transparency-dev/merkle v0.0.2
