@@ -163,7 +163,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
 		}
-		if err := signBundle(ctx, annotations, bundleSigner, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+		if err := secant.SignBundle(ctx, annotations, bundleSigner, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
 			return "", nil, fmt.Errorf("unable to sign image %q (bundle): %w", digest.String(), err)
 		}
 	}

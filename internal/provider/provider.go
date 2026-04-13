@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -64,9 +65,9 @@ type ProviderOpts struct {
 	rekorClients map[string]*client.Rekor
 
 	// Lazily initialized bundle signer for the "bundle" signing path.
-	// Cached at the provider level so that the ephemeral keypair and OIDC token
+	// Cached at the provider level so that the ephemeral keypair and Fulcio cert
 	// are generated at most once across all sign/attest resource operations.
-	bs *bundleSigner
+	bs *secant.BundleSigner
 }
 
 func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
@@ -108,7 +109,7 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier,
 	return sv, nil
 }
 
-func (p *ProviderOpts) getBundleSigner() (*bundleSigner, error) {
+func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -116,7 +117,7 @@ func (p *ProviderOpts) getBundleSigner() (*bundleSigner, error) {
 		return p.bs, nil
 	}
 
-	bs, err := newBundleSigner(p.oidc)
+	bs, err := secant.NewBundleSigner(p.oidc)
 	if err != nil {
 		return nil, err
 	}

@@ -300,7 +300,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		return digest.String(), errors.New("no ambient credentials are available to attest with, skipping attesting"), nil
 	}
 
-	statements := []*attestStatement{}
+	statements := []*stypes.Statement{}
 
 	for _, data := range preds {
 		// Write the attestation to a temporary file.
@@ -356,7 +356,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			return "", nil, errors.New("one of predicate or predicate_file must be specified")
 		}
 
-		stmt, err := newAttestStatement(digest, reader, data.PredicateType.ValueString())
+		stmt, err := secant.NewStatement(digest, reader, data.PredicateType.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating attestation statement: %w", err)
 		}
@@ -373,15 +373,6 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	}
 
 	if shouldPerformLegacy(sigFmt) {
-		// Convert to secant statement type for the legacy path.
-		legacyStmts := make([]*stypes.Statement, len(statements))
-		for i, s := range statements {
-			legacyStmts[i] = &stypes.Statement{
-				Digest:  s.Digest,
-				Type:    s.Type,
-				Payload: s.Payload,
-			}
-		}
 		sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("creating signer: %w", err)
@@ -390,7 +381,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		if err != nil {
 			return "", nil, fmt.Errorf("creating rekor client: %w", err)
 		}
-		if err := secant.Attest(ctx, arm.Conflict.ValueString(), legacyStmts, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+		if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
 			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
 		}
 	}
@@ -399,7 +390,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
 		}
-		if err := attestBundle(ctx, statements, bs, r.popts.withContext(ctx)); err != nil {
+		if err := secant.AttestBundle(ctx, statements, bs, r.popts.withContext(ctx)); err != nil {
 			return "", nil, fmt.Errorf("unable to attest image %q (bundle): %w", digest.String(), err)
 		}
 	}

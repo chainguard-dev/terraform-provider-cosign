@@ -23,7 +23,13 @@ import (
 // refresh before the token actually expires.
 const oidcExpiryBuffer = 30 * time.Second
 
-// An impl that represents github.com/sigstore/cosign/pkg/providers/*.
+// OIDCProvider is what providers need to implement to participate in furnishing OIDC tokens.
+type OIDCProvider interface {
+	Enabled(ctx context.Context) bool
+	Provide(ctx context.Context, audience string) (string, error)
+}
+
+// oidcProvider represents github.com/sigstore/cosign/pkg/providers/*.
 // Caches the token until near its expiry so that back-to-back calls
 // (e.g. legacy then bundle path in "both" mode) share a single auth
 // prompt, while calls after token expiry get a fresh token.
