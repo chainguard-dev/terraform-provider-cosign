@@ -256,8 +256,8 @@ github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
 github.com/cespare/xxhash/v2 v2.1.2/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/chainguard-dev/terraform-provider-oci v0.1.0 h1:C5lnI3N69qG0sl0123kKpWEWp+ri6H9uFfP+HsnjyZc=
-github.com/chainguard-dev/terraform-provider-oci v0.1.0/go.mod h1:0/OyXRNUfe6f/W2lXRHac2aTvqF/+6hMLWCa4TzwIrA=
+github.com/chainguard-dev/terraform-provider-oci v0.1.2 h1:IqkCMMocu19KwpDJn04jQOUWc8OFntCpI2905sjYb60=
+github.com/chainguard-dev/terraform-provider-oci v0.1.2/go.mod h1:0/OyXRNUfe6f/W2lXRHac2aTvqF/+6hMLWCa4TzwIrA=
 github.com/chrismellard/docker-credential-acr-env v0.0.0-20230304212654-82a0ddb27589 h1:krfRl01rzPzxSxyLyrChD+U+MzsBXbm0OwYYB67uF+4=
 github.com/chrismellard/docker-credential-acr-env v0.0.0-20230304212654-82a0ddb27589/go.mod h1:OuDyvmLnMCwa2ep4Jkm6nyA0ocJuZlGyk2gGseVzERM=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
