@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/rekor/pkg/generated/client"
 )
@@ -150,7 +151,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		attestationEntryType = data.DefaultAttestationEntryType.ValueString()
 	}
 
-	timeout := 3 * time.Minute // same default as cosign CLI
+	timeout := options.DefaultTimeout
 	if !data.Timeout.IsNull() && !data.Timeout.IsUnknown() {
 		d, err := time.ParseDuration(data.Timeout.ValueString())
 		if err != nil {
