@@ -31,6 +31,7 @@ data "cosign_verify" "example" {
 ### Optional
 
 - `default_attestation_entry_type` (String) Default Rekor entry type to use for attestations. Valid values are 'intoto' (default) or 'dsse'.
+- `timeout` (String) Timeout for signing and attestation operations, as a Go duration string (e.g. '5m', '10m'). Defaults to '3m'.
 
 ## Sign
 
