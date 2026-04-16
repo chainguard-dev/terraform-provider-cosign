@@ -24,6 +24,7 @@ require (
 	github.com/sigstore/cosign/v3 v3.0.5
 	github.com/sigstore/fulcio v1.8.5
 	github.com/sigstore/policy-controller v0.14.1-0.20260320111758-65ad92569d69
+	github.com/sigstore/protobuf-specs v0.5.0
 	github.com/sigstore/rekor v1.5.1
 	github.com/sigstore/sigstore v1.10.4
 	github.com/sigstore/sigstore-go v1.1.4
@@ -263,7 +264,6 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/sigstore/protobuf-specs v0.5.0 // indirect
 	github.com/sigstore/rekor-tiles/v2 v2.2.0 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/aws v1.10.4 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/azure v1.10.4 // indirect
