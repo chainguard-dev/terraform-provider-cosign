@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -24,18 +25,11 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// BundleOIDCProvider furnishes OIDC tokens for keyless signing via the bundle path.
-// Structurally identical to fulcio.OIDCProvider so the same implementation satisfies both.
-type BundleOIDCProvider interface {
-	Enabled(ctx context.Context) bool
-	Provide(ctx context.Context, audience string) (string, error)
-}
-
 // BundleSigner holds the materials needed for the cosign v3 bundle signing path.
 // The ephemeral keypair is generated once and reused across all operations.
 // Fulcio certificates are cached and refreshed when nearing expiry.
 type BundleSigner struct {
-	oidc            BundleOIDCProvider
+	oidc            fulcio.OIDCProvider
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
 	keypair         sign.Keypair
@@ -47,7 +41,7 @@ type BundleSigner struct {
 
 // NewBundleSigner loads SigningConfig and TrustedMaterial from TUF and generates
 // an ephemeral keypair for signing.
-func NewBundleSigner(oidc BundleOIDCProvider) (*BundleSigner, error) {
+func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
 	sc, err := cosign.SigningConfig()
 	if err != nil {
 		return nil, fmt.Errorf("loading signing config from TUF: %w", err)

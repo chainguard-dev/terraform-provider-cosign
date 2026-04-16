@@ -54,7 +54,7 @@ type ProviderOpts struct {
 	defaultAttestationEntryType string
 	defaultSignatureFormat      string
 
-	oidc OIDCProvider
+	oidc fulcio.OIDCProvider
 
 	sync.Mutex
 
