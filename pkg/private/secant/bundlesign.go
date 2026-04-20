@@ -22,7 +22,6 @@ import (
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
-	sgbundle "github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/sign"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -299,21 +298,25 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 	return true, nil
 }
 
-// matchingBundleReferrers returns referrer descriptors for digest that are
-// cosign v3 bundles annotated with the given predicate type.
-func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option) ([]v1.Descriptor, error) {
-	bundleMediaType, err := sgbundle.MediaTypeString("0.3")
-	if err != nil {
-		return nil, fmt.Errorf("generating bundle media type: %w", err)
-	}
+// bundleMediaTypePrefix matches sigstore bundle media types across all
+// versions (v0.1 / v0.2 / v0.3 / future v0.4+). Sigstore-go's MediaTypeString
+// is version-specific; prefix-matching here mirrors how cosign itself
+// filters bundle referrers in pkg/oci/remote/signatures.go.
+const bundleMediaTypePrefix = "application/vnd.dev.sigstore.bundle"
 
-	idx, err := ociremote.Referrers(digest, bundleMediaType, opts...)
+// matchingBundleReferrers returns referrer descriptors for digest that are
+// sigstore bundles annotated with the given predicate type.
+func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option) ([]v1.Descriptor, error) {
+	idx, err := ociremote.Referrers(digest, "", opts...)
 	if err != nil {
 		return nil, fmt.Errorf("listing referrers: %w", err)
 	}
 
 	var matching []v1.Descriptor
 	for _, m := range idx.Manifests {
+		if !strings.HasPrefix(m.ArtifactType, bundleMediaTypePrefix) {
+			continue
+		}
 		if m.Annotations[ociremote.BundlePredicateType] == predicateType {
 			matching = append(matching, m)
 		}
