@@ -5,9 +5,9 @@ go 1.25.7
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.1.3
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
-	github.com/go-openapi/runtime v0.29.3
+	github.com/go-openapi/runtime v0.29.4
 	github.com/go-openapi/strfmt v0.26.1
-	github.com/go-openapi/swag/conv v0.25.5
+	github.com/go-openapi/swag/conv v0.26.0
 	github.com/google/certificate-transparency-go v1.3.3
 	github.com/google/go-containerregistry v0.21.5
 	github.com/google/uuid v1.6.0
@@ -138,7 +138,7 @@ require (
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-openapi/analysis v0.24.3 // indirect
+	github.com/go-openapi/analysis v0.25.0 // indirect
 	github.com/go-openapi/errors v0.22.7 // indirect
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
 	github.com/go-openapi/jsonreference v0.21.5 // indirect
@@ -146,14 +146,14 @@ require (
 	github.com/go-openapi/spec v0.22.4 // indirect
 	github.com/go-openapi/swag v0.25.5 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.5 // indirect
-	github.com/go-openapi/swag/fileutils v0.25.5 // indirect
+	github.com/go-openapi/swag/fileutils v0.26.0 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
-	github.com/go-openapi/swag/jsonutils v0.25.5 // indirect
+	github.com/go-openapi/swag/jsonutils v0.26.0 // indirect
 	github.com/go-openapi/swag/loading v0.25.5 // indirect
 	github.com/go-openapi/swag/mangling v0.25.5 // indirect
 	github.com/go-openapi/swag/netutils v0.25.5 // indirect
-	github.com/go-openapi/swag/stringutils v0.25.5 // indirect
-	github.com/go-openapi/swag/typeutils v0.25.5 // indirect
+	github.com/go-openapi/swag/stringutils v0.26.0 // indirect
+	github.com/go-openapi/swag/typeutils v0.26.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.5 // indirect
 	github.com/go-openapi/validate v0.25.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
@@ -300,10 +300,10 @@ require (
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0 // indirect
-	go.opentelemetry.io/otel v1.42.0 // indirect
-	go.opentelemetry.io/otel/metric v1.42.0 // indirect
+	go.opentelemetry.io/otel v1.43.0 // indirect
+	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.42.0 // indirect
-	go.opentelemetry.io/otel/trace v1.42.0 // indirect
+	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
