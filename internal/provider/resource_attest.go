@@ -390,7 +390,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
 		}
-		if err := secant.AttestBundle(ctx, statements, bs, r.popts.withContext(ctx)); err != nil {
+		if err := secant.AttestBundle(ctx, arm.Conflict.ValueString(), statements, bs, r.popts.withContext(ctx)); err != nil {
 			return "", nil, fmt.Errorf("unable to attest image %q (bundle): %w", digest.String(), err)
 		}
 	}

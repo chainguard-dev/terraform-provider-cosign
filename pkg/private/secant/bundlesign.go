@@ -1,10 +1,12 @@
 package secant
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
@@ -19,6 +22,7 @@ import (
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
+	sgbundle "github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/sign"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -154,8 +158,11 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 }
 
 // SignBundle signs container images using the cosign v3 bundle format
-// and writes them as OCI referrers.
-func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleSigner, imgs []name.Digest, ropt []remote.Option) error {
+// and writes them as OCI referrers. conflict matches the semantics of Sign:
+// APPEND (or empty) always writes, SKIPSAME skips when an existing referrer
+// has an identical payload, REPLACE deletes existing referrers with matching
+// predicate type before writing.
+func SignBundle(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, imgs []name.Digest, ropt []remote.Option) error {
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, digest := range imgs {
@@ -185,6 +192,14 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 			return fmt.Errorf("marshaling statement: %w", err)
 		}
 
+		shouldWrite, err := resolveBundleConflict(digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
+		if err != nil {
+			return fmt.Errorf("resolving conflict for %q: %w", digest.String(), err)
+		}
+		if !shouldWrite {
+			continue
+		}
+
 		content := &sign.DSSEData{
 			Data:        payload,
 			PayloadType: ctypes.IntotoPayloadType,
@@ -204,8 +219,8 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 }
 
 // AttestBundle creates attestations using the cosign v3 bundle format
-// and writes them as OCI referrers.
-func AttestBundle(ctx context.Context, statements []*types.Statement, signer *BundleSigner, ropt []remote.Option) error {
+// and writes them as OCI referrers. See SignBundle for conflict semantics.
+func AttestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer *BundleSigner, ropt []remote.Option) error {
 	if len(statements) == 0 {
 		return nil
 	}
@@ -213,6 +228,19 @@ func AttestBundle(ctx context.Context, statements []*types.Statement, signer *Bu
 	ociOpts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, stmt := range statements {
+		predicateType, err := parsePredicateType(stmt.Type)
+		if err != nil {
+			return err
+		}
+
+		shouldWrite, err := resolveBundleConflict(stmt.Digest, predicateType, stmt.Payload, conflict, ropt, ociOpts)
+		if err != nil {
+			return fmt.Errorf("resolving conflict for %q: %w", stmt.Digest.String(), err)
+		}
+		if !shouldWrite {
+			continue
+		}
+
 		content := &sign.DSSEData{
 			Data:        stmt.Payload,
 			PayloadType: ctypes.IntotoPayloadType,
@@ -223,15 +251,110 @@ func AttestBundle(ctx context.Context, statements []*types.Statement, signer *Bu
 			return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
 		}
 
-		predicateType, err := parsePredicateType(stmt.Type)
-		if err != nil {
-			return err
-		}
-
 		if err := ociremote.WriteAttestationNewBundleFormat(stmt.Digest, bundleBytes, predicateType, ociOpts...); err != nil {
 			return fmt.Errorf("writing attestation bundle for %q: %w", stmt.Digest.String(), err)
 		}
 	}
 
 	return nil
+}
+
+// resolveBundleConflict applies the conflict policy to a pending bundle write.
+// It returns whether the caller should proceed with the write, after
+// optionally deleting existing referrers for REPLACE. The write may still be
+// needed under SKIPSAME if no existing referrer has an identical payload.
+func resolveBundleConflict(digest name.Digest, predicateType string, newPayload []byte, conflict string, ropt []remote.Option, opts []ociremote.Option) (bool, error) {
+	switch conflict {
+	case "", Append:
+		return true, nil
+	case SkipSame, Replace:
+	default:
+		return false, fmt.Errorf("unknown conflict mode: %q", conflict)
+	}
+
+	matching, err := matchingBundleReferrers(digest, predicateType, opts)
+	if err != nil {
+		return false, err
+	}
+
+	if conflict == SkipSame {
+		for _, m := range matching {
+			payload, err := referrerDSSEPayload(digest.Repository, m.Digest, ropt)
+			if err != nil {
+				return false, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
+			}
+			if bytes.Equal(payload, newPayload) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	for _, m := range matching {
+		ref := digest.Repository.Digest(m.Digest.String())
+		if err := remote.Delete(ref, ropt...); err != nil {
+			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
+		}
+	}
+	return true, nil
+}
+
+// matchingBundleReferrers returns referrer descriptors for digest that are
+// cosign v3 bundles annotated with the given predicate type.
+func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option) ([]v1.Descriptor, error) {
+	bundleMediaType, err := sgbundle.MediaTypeString("0.3")
+	if err != nil {
+		return nil, fmt.Errorf("generating bundle media type: %w", err)
+	}
+
+	idx, err := ociremote.Referrers(digest, bundleMediaType, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("listing referrers: %w", err)
+	}
+
+	var matching []v1.Descriptor
+	for _, m := range idx.Manifests {
+		if m.Annotations[ociremote.BundlePredicateType] == predicateType {
+			matching = append(matching, m)
+		}
+	}
+	return matching, nil
+}
+
+// referrerDSSEPayload fetches the given referrer manifest, reads its first
+// layer (the protobuf bundle), and returns the bytes of the wrapped DSSE
+// envelope payload.
+func referrerDSSEPayload(repo name.Repository, descDigest v1.Hash, ropt []remote.Option) ([]byte, error) {
+	ref := repo.Digest(descDigest.String())
+	img, err := remote.Image(ref, ropt...)
+	if err != nil {
+		return nil, fmt.Errorf("fetching referrer image: %w", err)
+	}
+	layers, err := img.Layers()
+	if err != nil {
+		return nil, fmt.Errorf("getting layers: %w", err)
+	}
+	if len(layers) == 0 {
+		return nil, fmt.Errorf("referrer has no layers")
+	}
+	rc, err := layers[0].Uncompressed()
+	if err != nil {
+		return nil, fmt.Errorf("opening layer: %w", err)
+	}
+	defer rc.Close()
+
+	bundleBytes, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, fmt.Errorf("reading bundle bytes: %w", err)
+	}
+
+	var bundle protobundle.Bundle
+	if err := protojson.Unmarshal(bundleBytes, &bundle); err != nil {
+		return nil, fmt.Errorf("unmarshaling bundle: %w", err)
+	}
+	env := bundle.GetDsseEnvelope()
+	if env == nil {
+		return nil, fmt.Errorf("bundle has no DSSE envelope")
+	}
+	return env.Payload, nil
 }
