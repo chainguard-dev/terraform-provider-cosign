@@ -164,7 +164,10 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 			return fmt.Errorf("unable to parse digest %s", digest.DigestStr())
 		}
 
-		annoStruct, _ := structpb.NewStruct(annotations)
+		annoStruct, err := structpb.NewStruct(annotations)
+		if err != nil {
+			return fmt.Errorf("converting annotations to protobuf struct: %w", err)
+		}
 		subject := intotov1.ResourceDescriptor{
 			Digest:      map[string]string{digestParts[0]: digestParts[1]},
 			Annotations: annoStruct,
@@ -174,6 +177,7 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 			Type:          intotov1.StatementTypeUri,
 			Subject:       []*intotov1.ResourceDescriptor{&subject},
 			PredicateType: ctypes.CosignSignPredicateType,
+			Predicate:     &structpb.Struct{},
 		}
 
 		payload, err := protojson.Marshal(statement)
