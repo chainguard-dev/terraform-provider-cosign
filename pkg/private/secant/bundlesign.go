@@ -92,13 +92,13 @@ func (bs *BundleSigner) cacheCertFromBundle(bundleBytes []byte) error {
 		return fmt.Errorf("unmarshaling bundle: %w", err)
 	}
 
-	chain := bundle.GetVerificationMaterial().GetX509CertificateChain()
-	if chain == nil || len(chain.GetCertificates()) == 0 {
-		return fmt.Errorf("bundle contains no certificate chain")
+	cert := bundle.GetVerificationMaterial().GetCertificate()
+	if cert == nil {
+		return fmt.Errorf("bundle contains no certificate")
 	}
+	derBytes := cert.GetRawBytes()
 
-	derBytes := chain.GetCertificates()[0].GetRawBytes()
-	cert, err := x509.ParseCertificate(derBytes)
+	parsed, err := x509.ParseCertificate(derBytes)
 	if err != nil {
 		return fmt.Errorf("parsing certificate from bundle: %w", err)
 	}
@@ -107,7 +107,7 @@ func (bs *BundleSigner) cacheCertFromBundle(bundleBytes []byte) error {
 		Type:  "CERTIFICATE",
 		Bytes: derBytes,
 	})
-	bs.cert = cert
+	bs.cert = parsed
 	return nil
 }
 
@@ -123,20 +123,29 @@ func (bs *BundleSigner) certNeedsRefresh() bool {
 // internally. The cert is extracted from the bundle and cached so that
 // subsequent calls pass it directly, skipping Fulcio entirely.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
+	// Lock scope is deliberately split: we hold the mutex across a cert
+	// refresh so concurrent callers coalesce onto a single Fulcio fetch,
+	// but release it before the steady-state sign so cached-cert signs
+	// run in parallel.
 	bs.mu.Lock()
 
 	if bs.certNeedsRefresh() {
-		// First call or cert expiring — use the idToken flow, which
-		// fetches a Fulcio cert inside cbundle.SignData.
+		// Refresh path: keep the lock held through signWithIDToken so
+		// other goroutines observing certNeedsRefresh() block here
+		// instead of each issuing their own OIDC + Fulcio round-trip.
 		bundleBytes, err := bs.signWithIDToken(ctx, content)
 		bs.mu.Unlock()
 		return bundleBytes, err
 	}
 
+	// Snapshot the cached PEM under the lock so a concurrent refresh
+	// can't swap bs.certPEM out from under us mid-sign.
 	certPEM := bs.certPEM
 	bs.mu.Unlock()
 
-	// Subsequent calls — pass cached cert, skipping Fulcio.
+	// Steady state: sign with the cached cert, skipping Fulcio. Safe to
+	// run unlocked because certPEM is a local copy and the keypair /
+	// signingConfig / trustedMaterial fields are immutable after init.
 	bundle, err := cbundle.SignData(ctx, content, bs.keypair, "", certPEM, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
@@ -165,7 +174,6 @@ func SignBundle(ctx context.Context, annotations map[string]any, signer *BundleS
 			Type:          intotov1.StatementTypeUri,
 			Subject:       []*intotov1.ResourceDescriptor{&subject},
 			PredicateType: ctypes.CosignSignPredicateType,
-			Predicate:     &structpb.Struct{},
 		}
 
 		payload, err := protojson.Marshal(statement)

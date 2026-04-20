@@ -50,10 +50,8 @@ func TestCertNeedsRefreshNearExpiry(t *testing.T) {
 
 func TestCacheCertFromBundle(t *testing.T) {
 	certPEM, cert := generateTestCert(t, 10*time.Minute)
-
-	// Build a minimal protobuf bundle JSON containing the cert.
 	derBlock, _ := pem.Decode(certPEM)
-	bundleJSON := buildTestBundleJSON(t, derBlock.Bytes)
+	bundleJSON := buildTestBundleJSONCertificate(t, derBlock.Bytes)
 
 	bs := &BundleSigner{}
 	if err := bs.cacheCertFromBundle(bundleJSON); err != nil {
@@ -76,7 +74,7 @@ func TestCacheCertFromBundleNoCerts(t *testing.T) {
 	bundleJSON := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{}}`)
 	bs := &BundleSigner{}
 	if err := bs.cacheCertFromBundle(bundleJSON); err == nil {
-		t.Fatal("expected error when bundle has no certificate chain")
+		t.Fatal("expected error when bundle has no certificate")
 	}
 }
 
@@ -116,20 +114,16 @@ func generateTestCert(t *testing.T, validity time.Duration) ([]byte, *x509.Certi
 	return certPEM, cert
 }
 
-// buildTestBundleJSON creates a minimal protobuf bundle JSON with the given
-// DER-encoded certificate in the verification material.
-func buildTestBundleJSON(t *testing.T, certDER []byte) []byte {
+// buildTestBundleJSONCertificate creates a v0.3 protobuf bundle JSON using
+// VerificationMaterial.Certificate (the form cbundle.SignData emits).
+func buildTestBundleJSONCertificate(t *testing.T, certDER []byte) []byte {
 	t.Helper()
 
 	bundle := &protobundle.Bundle{
 		MediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
 		VerificationMaterial: &protobundle.VerificationMaterial{
-			Content: &protobundle.VerificationMaterial_X509CertificateChain{
-				X509CertificateChain: &protocommon.X509CertificateChain{
-					Certificates: []*protocommon.X509Certificate{
-						{RawBytes: certDER},
-					},
-				},
+			Content: &protobundle.VerificationMaterial_Certificate{
+				Certificate: &protocommon.X509Certificate{RawBytes: certDER},
 			},
 		},
 	}
@@ -140,3 +134,4 @@ func buildTestBundleJSON(t *testing.T, certDER []byte) []byte {
 	}
 	return data
 }
+
