@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -56,20 +54,16 @@ func (p *oidcProvider) Provide(ctx context.Context, audience string) (string, er
 }
 
 // tokenExpiry extracts the exp claim from a JWT token and returns the time
-// minus a buffer. If the token can't be parsed, returns the current time
-// (forcing a re-fetch on next call).
+// minus a buffer. For any parse failure or missing exp, it returns the
+// current time so the next call bypasses the cache and re-fetches.
 func tokenExpiry(token string) time.Time {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		// Not a valid JWT; disable caching so we re-fetch every time.
-		fmt.Fprintln(os.Stderr, "Warning: OIDC token is not a valid JWT, token caching disabled")
 		return time.Now()
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		// Can't decode payload; disable caching so we re-fetch every time.
-		fmt.Fprintf(os.Stderr, "Warning: failed to decode OIDC token payload: %v, token caching disabled\n", err)
 		return time.Now()
 	}
 
@@ -77,13 +71,9 @@ func tokenExpiry(token string) time.Time {
 		Exp int64 `json:"exp"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		// Can't extract exp claim; disable caching so we re-fetch every time.
-		fmt.Fprintf(os.Stderr, "Warning: failed to parse OIDC token claims: %v, token caching disabled\n", err)
 		return time.Now()
 	}
 	if claims.Exp == 0 {
-		// No exp claim; disable caching so we re-fetch every time.
-		fmt.Fprintln(os.Stderr, "Warning: OIDC token has no exp claim, token caching disabled")
 		return time.Now()
 	}
 
