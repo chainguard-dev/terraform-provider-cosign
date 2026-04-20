@@ -132,17 +132,17 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 			},
 			"fulcio_url": schema.StringAttribute{
-				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev).",
+				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev). Only honored when signature_format is 'legacy'.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("https://fulcio.sigstore.dev"),
+				Default:             stringdefault.StaticString(defaultFulcioURL),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"rekor_url": schema.StringAttribute{
-				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev).",
+				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev). Only honored when signature_format is 'legacy'.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
+				Default:             stringdefault.StaticString(defaultRekorURL),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"signature_format": schema.StringAttribute{
@@ -370,6 +370,10 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 	sigFmt := r.popts.defaultSignatureFormat
 	if !arm.SignatureFormat.IsNull() && !arm.SignatureFormat.IsUnknown() {
 		sigFmt = arm.SignatureFormat.ValueString()
+	}
+
+	if err := validateBundleURLs(sigFmt, arm.FulcioURL.ValueString(), arm.RekorURL.ValueString()); err != nil {
+		return "", nil, err
 	}
 
 	if shouldPerformLegacy(sigFmt) {

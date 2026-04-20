@@ -35,6 +35,31 @@ const (
 	signatureFormatBoth   = "both"
 )
 
+// Default Sigstore public-good endpoints. The legacy signing path honors
+// fulcio_url and rekor_url overrides, but the bundle path loads its
+// endpoints from the TUF-configured SigningConfig — overrides there would
+// silently do nothing, so non-default values are rejected in bundle mode.
+// TODO: when bundle mode supports configurable endpoints, drop the guard.
+const (
+	defaultFulcioURL = "https://fulcio.sigstore.dev"
+	defaultRekorURL  = "https://rekor.sigstore.dev"
+)
+
+// validateBundleURLs reports an error if signature_format includes bundle
+// and fulcio_url or rekor_url is set to a non-default value.
+func validateBundleURLs(sigFmt, fulcioURL, rekorURL string) error {
+	if !shouldPerformBundle(sigFmt) {
+		return nil
+	}
+	if fulcioURL != "" && fulcioURL != defaultFulcioURL {
+		return fmt.Errorf("fulcio_url must be unset or %q when signature_format is %q or %q (bundle mode uses TUF-configured endpoints)", defaultFulcioURL, signatureFormatBundle, signatureFormatBoth)
+	}
+	if rekorURL != "" && rekorURL != defaultRekorURL {
+		return fmt.Errorf("rekor_url must be unset or %q when signature_format is %q or %q (bundle mode uses TUF-configured endpoints)", defaultRekorURL, signatureFormatBundle, signatureFormatBoth)
+	}
+	return nil
+}
+
 // Ensure Provider satisfies various provider interfaces.
 var _ provider.Provider = &Provider{}
 

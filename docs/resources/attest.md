@@ -22,12 +22,12 @@ This attests the provided image digest with cosign.
 ### Optional
 
 - `conflict` (String) How to handle conflicting predicate values
-- `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev).
+- `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev). Only honored when signature_format is 'legacy'.
 - `predicate` (String, Deprecated) The JSON body of the in-toto predicate's claim.
 - `predicate_file` (Block List, Deprecated) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicate_file))
 - `predicate_type` (String, Deprecated) The in-toto predicate type of the claim being attested.
 - `predicates` (Block List) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicates))
-- `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev).
+- `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev). Only honored when signature_format is 'legacy'.
 - `signature_format` (String) The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.
 
 ### Read-Only
