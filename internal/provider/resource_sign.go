@@ -18,7 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 )
 
 var (
@@ -134,7 +133,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing"), nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.popts.timeout)
 	defer cancel()
 
 	// TODO: This should probably be configurable?

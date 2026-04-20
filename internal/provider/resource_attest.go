@@ -27,7 +27,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 )
 
 var (
@@ -364,7 +363,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		statements = append(statements, stmt)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, options.DefaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.popts.timeout)
 	defer cancel()
 
 	sigFmt := r.popts.defaultSignatureFormat

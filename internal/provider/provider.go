@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/rekor/pkg/generated/client"
 )
@@ -70,6 +71,7 @@ type Provider struct {
 type ProviderModel struct {
 	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
 	DefaultSignatureFormat      types.String `tfsdk:"default_signature_format"`
+	Timeout                     types.String `tfsdk:"timeout"`
 }
 
 type ProviderOpts struct {
@@ -77,6 +79,7 @@ type ProviderOpts struct {
 	keychain                    authn.Keychain
 	defaultAttestationEntryType string
 	defaultSignatureFormat      string
+	timeout                     time.Duration
 
 	oidc fulcio.OIDCProvider
 
@@ -171,6 +174,11 @@ func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp 
 				Optional:   true,
 				Validators: []validator.String{SignatureFormatValidator{}},
 			},
+			"timeout": schema.StringAttribute{
+				MarkdownDescription: "Timeout for signing and attestation operations, as a Go duration string (e.g. '5m', '10m'). Defaults to '3m'.",
+				Optional:            true,
+				Validators:          []validator.String{DurationValidator{}},
+			},
 		},
 	}
 }
@@ -210,12 +218,23 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		defaultSignatureFormat = data.DefaultSignatureFormat.ValueString()
 	}
 
+	timeout := options.DefaultTimeout
+	if !data.Timeout.IsNull() && !data.Timeout.IsUnknown() {
+		d, err := time.ParseDuration(data.Timeout.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid timeout", "Unable to parse timeout duration: "+err.Error())
+			return
+		}
+		timeout = d
+	}
+
 	opts := &ProviderOpts{
 		ropts:                       ropts,
 		keychain:                    kc,
 		oidc:                        &oidcProvider{},
 		defaultAttestationEntryType: attestationEntryType,
 		defaultSignatureFormat:      defaultSignatureFormat,
+		timeout:                     timeout,
 		signers:                     map[string]*fulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
 	}
@@ -307,4 +326,26 @@ func shouldPerformLegacy(signatureFormat string) bool {
 
 func shouldPerformBundle(signatureFormat string) bool {
 	return slices.Contains([]string{signatureFormatBundle, signatureFormatBoth}, signatureFormat)
+}
+
+// DurationValidator is a string validator that checks that the string is a valid Go duration.
+type DurationValidator struct{}
+
+var _ validator.String = DurationValidator{}
+
+func (v DurationValidator) Description(context.Context) string {
+	return "value must be a valid Go duration string (e.g. '5m', '10m', '1h30m')"
+}
+
+func (v DurationValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v DurationValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if _, err := time.ParseDuration(req.ConfigValue.ValueString()); err != nil {
+		resp.Diagnostics.AddError("error validating timeout", err.Error())
+	}
 }
