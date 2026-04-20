@@ -39,7 +39,6 @@ const (
 // fulcio_url and rekor_url overrides, but the bundle path loads its
 // endpoints from the TUF-configured SigningConfig — overrides there would
 // silently do nothing, so non-default values are rejected in bundle mode.
-// TODO: when bundle mode supports configurable endpoints, drop the guard.
 const (
 	defaultFulcioURL = "https://fulcio.sigstore.dev"
 	defaultRekorURL  = "https://rekor.sigstore.dev"
