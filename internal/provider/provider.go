@@ -137,17 +137,15 @@ func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
 	p.Lock()
 	defer p.Unlock()
 
-	if p.bs != nil {
-		return p.bs, nil
+	var err error
+	if p.bs == nil {
+		p.bs, err = secant.NewBundleSigner(p.oidc)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	bs, err := secant.NewBundleSigner(p.oidc)
-	if err != nil {
-		return nil, err
-	}
-	p.bs = bs
-
-	return bs, nil
+	return p.bs, nil
 }
 
 func (p *ProviderOpts) withContext(ctx context.Context) []remote.Option {
