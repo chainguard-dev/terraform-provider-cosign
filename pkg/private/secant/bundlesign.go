@@ -290,7 +290,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 	}
 
 	for _, m := range matching {
-		ref := digest.Repository.Digest(m.Digest.String())
+		ref := digest.Digest(m.Digest.String())
 		if err := remote.Delete(ref, ropt...); err != nil {
 			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}

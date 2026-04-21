@@ -134,4 +134,3 @@ func buildTestBundleJSONCertificate(t *testing.T, certDER []byte) []byte {
 	}
 	return data
 }
-
