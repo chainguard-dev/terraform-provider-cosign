@@ -14,12 +14,13 @@ func Entry(sha256CheckSum hash.Hash, signature, pubKey []byte) models.ProposedEn
 	// TODO: Signatures created on a digest using a hash algorithm other than SHA256 will fail
 	// upload right now. Plumb information on the hash algorithm used when signing from the
 	// SignerVerifier to use for the HashedRekordObj.Data.Hash.Algorithm.
+	hexStr := hex.EncodeToString(sha256CheckSum.Sum(nil))
 	re := hashedrekord_v001.V001Entry{
 		HashedRekordObj: models.HashedrekordV001Schema{
 			Data: &models.HashedrekordV001SchemaData{
 				Hash: &models.HashedrekordV001SchemaDataHash{
 					Algorithm: conv.Pointer(models.HashedrekordV001SchemaDataHashAlgorithmSha256),
-					Value:     conv.Pointer(hex.EncodeToString(sha256CheckSum.Sum(nil))),
+					Value:     &hexStr,
 				},
 			},
 			Signature: &models.HashedrekordV001SchemaSignature{
@@ -30,8 +31,9 @@ func Entry(sha256CheckSum hash.Hash, signature, pubKey []byte) models.ProposedEn
 			},
 		},
 	}
+	apiVersion := re.APIVersion()
 	pe := models.Hashedrekord{
-		APIVersion: conv.Pointer(re.APIVersion()),
+		APIVersion: &apiVersion,
 		Spec:       re.HashedRekordObj,
 	}
 
