@@ -2,10 +2,13 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -26,6 +29,37 @@ import (
 // and silences any associated warnings.
 const tfCosignDisableEnvVar = "TF_COSIGN_DISABLE"
 
+// Valid values for signature_format.
+const (
+	signatureFormatLegacy = "legacy"
+	signatureFormatBundle = "bundle"
+	signatureFormatBoth   = "both"
+)
+
+// Default Sigstore public-good endpoints. The legacy signing path honors
+// fulcio_url and rekor_url overrides, but the bundle path loads its
+// endpoints from the TUF-configured SigningConfig — overrides there would
+// silently do nothing, so non-default values are rejected in bundle mode.
+const (
+	defaultFulcioURL = "https://fulcio.sigstore.dev"
+	defaultRekorURL  = "https://rekor.sigstore.dev"
+)
+
+// validateBundleURLs reports an error if signature_format includes bundle
+// and fulcio_url or rekor_url is set to a non-default value.
+func validateBundleURLs(sigFmt, fulcioURL, rekorURL string) error {
+	if !shouldPerformBundle(sigFmt) {
+		return nil
+	}
+	if fulcioURL != "" && fulcioURL != defaultFulcioURL {
+		return fmt.Errorf("fulcio_url must be unset or %q when signature_format is %q or %q (bundle mode uses TUF-configured endpoints)", defaultFulcioURL, signatureFormatBundle, signatureFormatBoth)
+	}
+	if rekorURL != "" && rekorURL != defaultRekorURL {
+		return fmt.Errorf("rekor_url must be unset or %q when signature_format is %q or %q (bundle mode uses TUF-configured endpoints)", defaultRekorURL, signatureFormatBundle, signatureFormatBoth)
+	}
+	return nil
+}
+
 // Ensure Provider satisfies various provider interfaces.
 var _ provider.Provider = &Provider{}
 
@@ -36,6 +70,7 @@ type Provider struct {
 // ProviderModel describes the provider data model.
 type ProviderModel struct {
 	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
+	DefaultSignatureFormat      types.String `tfsdk:"default_signature_format"`
 	Timeout                     types.String `tfsdk:"timeout"`
 }
 
@@ -43,6 +78,7 @@ type ProviderOpts struct {
 	ropts                       []remote.Option
 	keychain                    authn.Keychain
 	defaultAttestationEntryType string
+	defaultSignatureFormat      string
 	timeout                     time.Duration
 
 	oidc fulcio.OIDCProvider
@@ -54,6 +90,11 @@ type ProviderOpts struct {
 
 	// Keyed off rekor URL.
 	rekorClients map[string]*client.Rekor
+
+	// Lazily initialized bundle signer for the "bundle" signing path.
+	// Cached at the provider level so that the ephemeral keypair and Fulcio cert
+	// are generated at most once across all sign/attest resource operations.
+	bs *secant.BundleSigner
 }
 
 func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
@@ -95,6 +136,21 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier,
 	return sv, nil
 }
 
+func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
+	p.Lock()
+	defer p.Unlock()
+
+	var err error
+	if p.bs == nil {
+		p.bs, err = secant.NewBundleSigner(p.oidc)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return p.bs, nil
+}
+
 func (p *ProviderOpts) withContext(ctx context.Context) []remote.Option {
 	return append([]remote.Option{remote.WithContext(ctx)}, p.ropts...)
 }
@@ -111,6 +167,12 @@ func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp 
 				MarkdownDescription: "Default Rekor entry type to use for attestations. Valid values are 'intoto' (default) or 'dsse'.",
 				Optional:            true,
 				Validators:          []validator.String{EntryTypeValidator{}},
+			},
+			"default_signature_format": schema.StringAttribute{
+				MarkdownDescription: fmt.Sprintf("Default signature format to use for signing. Valid values are '%s' (default), '%s', or '%s'. Can be overridden per-resource.",
+					signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth),
+				Optional:   true,
+				Validators: []validator.String{SignatureFormatValidator{}},
 			},
 			"timeout": schema.StringAttribute{
 				MarkdownDescription: "Timeout for signing and attestation operations, as a Go duration string (e.g. '5m', '10m'). Defaults to '3m'.",
@@ -151,6 +213,11 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		attestationEntryType = data.DefaultAttestationEntryType.ValueString()
 	}
 
+	defaultSignatureFormat := signatureFormatLegacy
+	if !data.DefaultSignatureFormat.IsNull() && !data.DefaultSignatureFormat.IsUnknown() {
+		defaultSignatureFormat = data.DefaultSignatureFormat.ValueString()
+	}
+
 	timeout := options.DefaultTimeout
 	if !data.Timeout.IsNull() && !data.Timeout.IsUnknown() {
 		d, err := time.ParseDuration(data.Timeout.ValueString())
@@ -166,6 +233,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		keychain:                    kc,
 		oidc:                        &oidcProvider{},
 		defaultAttestationEntryType: attestationEntryType,
+		defaultSignatureFormat:      defaultSignatureFormat,
 		timeout:                     timeout,
 		signers:                     map[string]*fulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
@@ -223,6 +291,41 @@ func (v EntryTypeValidator) ValidateString(ctx context.Context, req validator.St
 	default:
 		resp.Diagnostics.AddError("error validating default_attestation_entry_type", v.Description(ctx))
 	}
+}
+
+// SignatureFormatValidator is a string validator that checks that the string is a valid signature format.
+type SignatureFormatValidator struct{}
+
+var _ validator.String = SignatureFormatValidator{}
+
+func (v SignatureFormatValidator) Description(context.Context) string {
+	return fmt.Sprintf("value must be one of (`%s`, `%s`, `%s`)", signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth)
+}
+
+func (v SignatureFormatValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v SignatureFormatValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+
+	switch val {
+	case signatureFormatLegacy, signatureFormatBundle, signatureFormatBoth:
+		return
+	default:
+		resp.Diagnostics.AddError("error validating signature_format", v.Description(ctx))
+	}
+}
+
+func shouldPerformLegacy(signatureFormat string) bool {
+	return slices.Contains([]string{signatureFormatLegacy, signatureFormatBoth}, signatureFormat)
+}
+
+func shouldPerformBundle(signatureFormat string) bool {
+	return slices.Contains([]string{signatureFormatBundle, signatureFormatBoth}, signatureFormat)
 }
 
 // DurationValidator is a string validator that checks that the string is a valid Go duration.

@@ -34,12 +34,13 @@ type SignResource struct {
 }
 
 type SignResourceModel struct {
-	Id        types.String `tfsdk:"id"`
-	Image     types.String `tfsdk:"image"`
-	Conflict  types.String `tfsdk:"conflict"`
-	SignedRef types.String `tfsdk:"signed_ref"`
-	FulcioURL types.String `tfsdk:"fulcio_url"`
-	RekorURL  types.String `tfsdk:"rekor_url"`
+	Id              types.String `tfsdk:"id"`
+	Image           types.String `tfsdk:"image"`
+	Conflict        types.String `tfsdk:"conflict"`
+	SignedRef       types.String `tfsdk:"signed_ref"`
+	FulcioURL       types.String `tfsdk:"fulcio_url"`
+	RekorURL        types.String `tfsdk:"rekor_url"`
+	SignatureFormat types.String `tfsdk:"signature_format"`
 }
 
 func (r *SignResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -82,17 +83,23 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Computed:            true,
 			},
 			"fulcio_url": schema.StringAttribute{
-				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev).",
+				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev). Only honored when signature_format is 'legacy'.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("https://fulcio.sigstore.dev"),
+				Default:             stringdefault.StaticString(defaultFulcioURL),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"rekor_url": schema.StringAttribute{
-				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev).",
+				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev). Only honored when signature_format is 'legacy'.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
+				Default:             stringdefault.StaticString(defaultRekorURL),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"signature_format": schema.StringAttribute{
+				MarkdownDescription: "The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.",
+				Optional:            true,
+				Validators:          []validator.String{SignatureFormatValidator{}},
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 		},
@@ -126,24 +133,42 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		return digest.String(), errors.New("no ambient credentials are available to sign with, skipping signing"), nil
 	}
 
-	sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating signer: %w", err)
-	}
-
-	rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating rekor client: %w", err)
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, r.popts.timeout)
 	defer cancel()
 
 	// TODO: This should probably be configurable?
 	var annotations map[string]any = nil
 
-	if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
-		return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
+	sigFmt := r.popts.defaultSignatureFormat
+	if !data.SignatureFormat.IsNull() && !data.SignatureFormat.IsUnknown() {
+		sigFmt = data.SignatureFormat.ValueString()
+	}
+
+	if err := validateBundleURLs(sigFmt, data.FulcioURL.ValueString(), data.RekorURL.ValueString()); err != nil {
+		return "", nil, err
+	}
+
+	if shouldPerformLegacy(sigFmt) {
+		sv, err := r.popts.signerVerifier(data.FulcioURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating signer: %w", err)
+		}
+		rekorClient, err := r.popts.rekorClient(data.RekorURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating rekor client: %w", err)
+		}
+		if err := secant.Sign(ctx, data.Conflict.ValueString(), annotations, sv, rekorClient, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to sign image %q: %w", digest.String(), err)
+		}
+	}
+	if shouldPerformBundle(sigFmt) {
+		bundleSigner, err := r.popts.getBundleSigner()
+		if err != nil {
+			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
+		}
+		if err := secant.SignBundle(ctx, data.Conflict.ValueString(), annotations, bundleSigner, []name.Digest{digest}, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to sign image %q (bundle): %w", digest.String(), err)
+		}
 	}
 	return digest.String(), nil, nil
 }

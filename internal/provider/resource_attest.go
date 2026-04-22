@@ -63,9 +63,10 @@ type AttestResourceModel struct {
 
 	Predicates types.List `tfsdk:"predicates"`
 
-	AttestedRef types.String `tfsdk:"attested_ref"`
-	FulcioURL   types.String `tfsdk:"fulcio_url"`
-	RekorURL    types.String `tfsdk:"rekor_url"`
+	AttestedRef     types.String `tfsdk:"attested_ref"`
+	FulcioURL       types.String `tfsdk:"fulcio_url"`
+	RekorURL        types.String `tfsdk:"rekor_url"`
+	SignatureFormat types.String `tfsdk:"signature_format"`
 }
 
 func (r *AttestResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -130,17 +131,23 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 			},
 			"fulcio_url": schema.StringAttribute{
-				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev).",
+				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev). Only honored when signature_format is 'legacy'.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("https://fulcio.sigstore.dev"),
+				Default:             stringdefault.StaticString(defaultFulcioURL),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"rekor_url": schema.StringAttribute{
-				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev).",
+				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev). Only honored when signature_format is 'legacy'.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("https://rekor.sigstore.dev"),
+				Default:             stringdefault.StaticString(defaultRekorURL),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"signature_format": schema.StringAttribute{
+				MarkdownDescription: "The signature format to use. Overrides the provider default. Valid values are 'legacy', 'bundle', or 'both'.",
+				Optional:            true,
+				Validators:          []validator.String{SignatureFormatValidator{}},
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 		},
@@ -356,21 +363,39 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 		statements = append(statements, stmt)
 	}
 
-	sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating signer: %w", err)
-	}
-
-	rekorClient, err := r.popts.rekorClient(arm.RekorURL.ValueString())
-	if err != nil {
-		return "", nil, fmt.Errorf("creating rekor client: %w", err)
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, r.popts.timeout)
 	defer cancel()
 
-	if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
-		return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
+	sigFmt := r.popts.defaultSignatureFormat
+	if !arm.SignatureFormat.IsNull() && !arm.SignatureFormat.IsUnknown() {
+		sigFmt = arm.SignatureFormat.ValueString()
+	}
+
+	if err := validateBundleURLs(sigFmt, arm.FulcioURL.ValueString(), arm.RekorURL.ValueString()); err != nil {
+		return "", nil, err
+	}
+
+	if shouldPerformLegacy(sigFmt) {
+		sv, err := r.popts.signerVerifier(arm.FulcioURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating signer: %w", err)
+		}
+		rekorClient, err := r.popts.rekorClient(arm.RekorURL.ValueString())
+		if err != nil {
+			return "", nil, fmt.Errorf("creating rekor client: %w", err)
+		}
+		if err := secant.Attest(ctx, arm.Conflict.ValueString(), statements, sv, rekorClient, r.popts.withContext(ctx), secant.WithRekorEntryType(r.popts.defaultAttestationEntryType)); err != nil {
+			return "", nil, fmt.Errorf("unable to attest image %q: %w", digest.String(), err)
+		}
+	}
+	if shouldPerformBundle(sigFmt) {
+		bs, err := r.popts.getBundleSigner()
+		if err != nil {
+			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
+		}
+		if err := secant.AttestBundle(ctx, arm.Conflict.ValueString(), statements, bs, r.popts.withContext(ctx)); err != nil {
+			return "", nil, fmt.Errorf("unable to attest image %q (bundle): %w", digest.String(), err)
+		}
 	}
 
 	return digest.String(), nil, nil
