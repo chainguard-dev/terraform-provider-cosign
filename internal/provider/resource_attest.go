@@ -333,7 +333,7 @@ func (r *AttestResource) doAttest(ctx context.Context, arm *AttestResourceModel,
 			// and upon receiving io.EOF checks that things match.  That said,
 			// it is going to end up in memory for the attestation anyway, so
 			// we just read it all in here.
-			const maxPredicateSize = 10 << 20 // 10 MB
+			const maxPredicateSize = 32 << 20 // 32 MB
 			fi, err := os.Stat(path)
 			if err != nil {
 				return "", nil, fmt.Errorf("stat predicate file %q: %w", path, err)
