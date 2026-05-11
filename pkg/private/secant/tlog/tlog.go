@@ -34,12 +34,10 @@ import (
 // a burst of 50.
 var RekorRateLimiter = rate.NewLimiter(5.0, 50)
 
-// Tuning knobs for retrying CreateLogEntry on transient errors. Exposed as
-// vars so tests can shrink the delays.
-var (
-	createLogEntryMaxAttempts    = 5
-	createLogEntryInitialBackoff = 500 * time.Millisecond
-)
+const createLogEntryMaxAttempts = 5
+
+// Exposed as a var so tests can shrink the delay.
+var createLogEntryInitialBackoff = 500 * time.Millisecond
 
 func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEntry) (*models.LogEntryAnon, error) {
 	params := entries.NewCreateLogEntryParamsWithContext(ctx)
@@ -83,13 +81,11 @@ func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEn
 // before signing, so the Fulcio cert is fresh at upload time).
 func createLogEntryWithRetry(ctx context.Context, create func() (*entries.CreateLogEntryCreated, error)) (*entries.CreateLogEntryCreated, error) {
 	backoff := createLogEntryInitialBackoff
-	var lastErr error
-	for attempt := 1; attempt <= createLogEntryMaxAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		resp, err := create()
 		if err == nil {
 			return resp, nil
 		}
-		lastErr = err
 		if !isRetryableRekorError(err) || attempt == createLogEntryMaxAttempts {
 			return nil, err
 		}
@@ -103,7 +99,6 @@ func createLogEntryWithRetry(ctx context.Context, create func() (*entries.Create
 		}
 		backoff *= 2
 	}
-	return nil, lastErr
 }
 
 // isRetryableRekorError reports whether err from CreateLogEntry is worth
