@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
@@ -25,12 +26,27 @@ import (
 	"github.com/sigstore/sigstore/pkg/tuf"
 	"github.com/transparency-dev/merkle/proof"
 	"github.com/transparency-dev/merkle/rfc6962"
+	"golang.org/x/time/rate"
+)
+
+// RekorRateLimiter throttles all calls to Rekor (including retries from
+// createLogEntryWithRetry) to stay within rate limits. Defaults to 5 QPS with
+// a burst of 50.
+var RekorRateLimiter = rate.NewLimiter(5.0, 50)
+
+// Tuning knobs for retrying CreateLogEntry on transient errors. Exposed as
+// vars so tests can shrink the delays.
+var (
+	createLogEntryMaxAttempts    = 5
+	createLogEntryInitialBackoff = 500 * time.Millisecond
 )
 
 func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEntry) (*models.LogEntryAnon, error) {
 	params := entries.NewCreateLogEntryParamsWithContext(ctx)
 	params.SetProposedEntry(pe)
-	resp, err := rekorClient.Entries.CreateLogEntry(params)
+	resp, err := createLogEntryWithRetry(ctx, func() (*entries.CreateLogEntryCreated, error) {
+		return rekorClient.Entries.CreateLogEntry(params)
+	})
 	if err != nil {
 		// If the entry already exists, we get a specific error.
 		var existsErr *entries.CreateLogEntryConflict
@@ -55,6 +71,61 @@ func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEn
 		return &p, nil
 	}
 	return nil, errors.New("bad response from server")
+}
+
+// createLogEntryWithRetry retries create on transient transport errors. The
+// underlying retryablehttp client retries at the request level, but does not
+// catch errors that surface during response body decoding (notably HTTP/2
+// stream errors from Rekor). Between attempts the loop sleeps with
+// exponential backoff and then acquires a token from RekorRateLimiter, so
+// concurrent retries don't bypass the application-wide rate limit (the first
+// attempt's token is paid for by the caller in secant.Sign / secant.Attest,
+// before signing, so the Fulcio cert is fresh at upload time).
+func createLogEntryWithRetry(ctx context.Context, create func() (*entries.CreateLogEntryCreated, error)) (*entries.CreateLogEntryCreated, error) {
+	backoff := createLogEntryInitialBackoff
+	var lastErr error
+	for attempt := 1; attempt <= createLogEntryMaxAttempts; attempt++ {
+		resp, err := create()
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryableRekorError(err) || attempt == createLogEntryMaxAttempts {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
+		}
+		backoff *= 2
+	}
+	return nil, lastErr
+}
+
+// isRetryableRekorError reports whether err from CreateLogEntry is worth
+// retrying here. Any typed API error — Conflict, BadRequest, or the catch-all
+// Default — is terminal at this layer: the underlying retryablehttp client
+// already retries 5xx and 429 at the request level. We only need to handle
+// untyped transport errors that surface during response body decoding
+// (notably HTTP/2 stream errors), which retryablehttp cannot see.
+func isRetryableRekorError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, ok := errors.AsType[*entries.CreateLogEntryConflict](err); ok {
+		return false
+	}
+	if _, ok := errors.AsType[*entries.CreateLogEntryBadRequest](err); ok {
+		return false
+	}
+	if _, ok := errors.AsType[*entries.CreateLogEntryDefault](err); ok {
+		return false
+	}
+	return true
 }
 
 func getTlogEntry(ctx context.Context, rekorClient *client.Rekor, entryUUID string) (*models.LogEntryAnon, error) {
