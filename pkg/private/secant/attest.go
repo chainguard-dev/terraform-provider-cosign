@@ -29,7 +29,6 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/models"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature/options"
-	"golang.org/x/time/rate"
 )
 
 var (
@@ -37,9 +36,11 @@ var (
 	intotoType = "intoto"
 )
 
-// RekorRateLimiter is used to throttle calls to Rekor when signing or attesting images in order to stay within the rate limits.
-// Defaults to a 5 QPS limit.
-var RekorRateLimiter = rate.NewLimiter(5.0, 50)
+// RekorRateLimiter is used to throttle calls to Rekor when signing or
+// attesting images in order to stay within the rate limits. Defaults to a
+// 5 QPS limit. Aliased to tlog.RekorRateLimiter so the same instance governs
+// both the pre-call waits here and the retry-time waits inside tlog.Upload.
+var RekorRateLimiter = tlog.RekorRateLimiter
 
 // NewStatement generates a statement for use in Attest.
 func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types.Statement, error) {
