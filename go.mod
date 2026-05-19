@@ -26,7 +26,7 @@ require (
 	github.com/sigstore/policy-controller v0.15.1
 	github.com/sigstore/protobuf-specs v0.5.1
 	github.com/sigstore/rekor v1.5.1
-	github.com/sigstore/sigstore v1.10.5
+	github.com/sigstore/sigstore v1.10.6
 	github.com/sigstore/sigstore-go v1.1.4
 	github.com/transparency-dev/merkle v0.0.2
 	golang.org/x/oauth2 v0.36.0
