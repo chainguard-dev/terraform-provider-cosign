@@ -42,16 +42,47 @@ type BundleSigner struct {
 	cert    *x509.Certificate // Parsed cert for expiry checking
 }
 
-// NewBundleSigner loads SigningConfig and TrustedMaterial from TUF and generates
-// an ephemeral keypair for signing.
-func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
-	sc, err := cosign.SigningConfig()
-	if err != nil {
-		return nil, fmt.Errorf("loading signing config from TUF: %w", err)
+// BundleSignerOption customizes a BundleSigner at construction.
+type BundleSignerOption func(*bundleSignerConfig)
+
+type bundleSignerConfig struct {
+	signingConfig   *root.SigningConfig
+	trustedMaterial root.TrustedMaterial
+}
+
+// WithSigningConfig overrides the SigningConfig that would otherwise be loaded
+// from the public TUF root. Useful when the desired Fulcio/Rekor topology is
+// not yet reflected in TUF (e.g. piloting a Rekor v2 instance).
+func WithSigningConfig(sc *root.SigningConfig) BundleSignerOption {
+	return func(c *bundleSignerConfig) { c.signingConfig = sc }
+}
+
+// WithTrustedMaterial overrides the TrustedRoot that would otherwise be loaded
+// from the public TUF root. Primarily a test seam.
+func WithTrustedMaterial(tm root.TrustedMaterial) BundleSignerOption {
+	return func(c *bundleSignerConfig) { c.trustedMaterial = tm }
+}
+
+// NewBundleSigner loads SigningConfig and TrustedMaterial from TUF (unless
+// overridden via options) and generates an ephemeral keypair for signing.
+func NewBundleSigner(oidc fulcio.OIDCProvider, opts ...BundleSignerOption) (*BundleSigner, error) {
+	cfg := &bundleSignerConfig{}
+	for _, opt := range opts {
+		opt(cfg)
 	}
-	tr, err := cosign.TrustedRoot()
-	if err != nil {
-		return nil, fmt.Errorf("loading trusted root from TUF: %w", err)
+	if cfg.signingConfig == nil {
+		sc, err := cosign.SigningConfig()
+		if err != nil {
+			return nil, fmt.Errorf("loading signing config from TUF: %w", err)
+		}
+		cfg.signingConfig = sc
+	}
+	if cfg.trustedMaterial == nil {
+		tr, err := cosign.TrustedRoot()
+		if err != nil {
+			return nil, fmt.Errorf("loading trusted root from TUF: %w", err)
+		}
+		cfg.trustedMaterial = tr
 	}
 	keypair, err := sign.NewEphemeralKeypair(nil)
 	if err != nil {
@@ -59,8 +90,8 @@ func NewBundleSigner(oidc fulcio.OIDCProvider) (*BundleSigner, error) {
 	}
 	return &BundleSigner{
 		oidc:            oidc,
-		signingConfig:   sc,
-		trustedMaterial: tr,
+		signingConfig:   cfg.signingConfig,
+		trustedMaterial: cfg.trustedMaterial,
 		keypair:         keypair,
 	}, nil
 }
