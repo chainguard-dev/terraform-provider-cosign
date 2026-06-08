@@ -113,7 +113,7 @@ jobs:
             sum.golang.org:443
             tuf-repo-cdn.sigstore.dev:443
 
-      - uses: step-security/workflow-conclusion-action@e624ac1e0582b6498a4ddaa8cf623532fc7b95ea # v3.0.9
+      - uses: step-security/workflow-conclusion-action@417a08214e364cc913458a2fab8aae827d1ba779 # v3.0.10
 
       - name: Handle conclusion
         env:
