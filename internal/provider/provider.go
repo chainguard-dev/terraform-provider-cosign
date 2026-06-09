@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
+	"github.com/sigstore/cosign/v3/pkg/cosign"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/rekor/pkg/generated/client"
 )
@@ -72,6 +73,7 @@ type ProviderModel struct {
 	DefaultAttestationEntryType types.String `tfsdk:"default_attestation_entry_type"`
 	DefaultSignatureFormat      types.String `tfsdk:"default_signature_format"`
 	Timeout                     types.String `tfsdk:"timeout"`
+	UseRekorV2                  types.Bool   `tfsdk:"use_rekor_v2"`
 }
 
 type ProviderOpts struct {
@@ -80,6 +82,7 @@ type ProviderOpts struct {
 	defaultAttestationEntryType string
 	defaultSignatureFormat      string
 	timeout                     time.Duration
+	useRekorV2                  bool
 
 	oidc fulcio.OIDCProvider
 
@@ -142,7 +145,18 @@ func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
 
 	var err error
 	if p.bs == nil {
-		p.bs, err = secant.NewBundleSigner(p.oidc)
+		// When use_rekor_v2 is set, drive the bundle path at a Rekor v2
+		// instance by loading the Rekor v2 SigningConfig from TUF and feeding
+		// it through the WithSigningConfig seam instead of the default config.
+		var opts []secant.BundleSignerOption
+		if p.useRekorV2 {
+			sc, scErr := cosign.SigningConfigRekorV2()
+			if scErr != nil {
+				return nil, fmt.Errorf("loading rekor v2 signing config: %w", scErr)
+			}
+			opts = append(opts, secant.WithSigningConfig(sc))
+		}
+		p.bs, err = secant.NewBundleSigner(p.oidc, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -178,6 +192,11 @@ func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp 
 				MarkdownDescription: "Timeout for signing and attestation operations, as a Go duration string (e.g. '5m', '10m'). Defaults to '3m'.",
 				Optional:            true,
 				Validators:          []validator.String{DurationValidator{}},
+			},
+			"use_rekor_v2": schema.BoolAttribute{
+				MarkdownDescription: fmt.Sprintf("When true, the bundle signing path targets Rekor v2 by loading the Rekor v2 SigningConfig from TUF instead of the default. Only affects '%s' and '%s' signing; ignored for '%s'.",
+					signatureFormatBundle, signatureFormatBoth, signatureFormatLegacy),
+				Optional: true,
 			},
 		},
 	}
@@ -228,6 +247,11 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		timeout = d
 	}
 
+	useRekorV2 := false
+	if !data.UseRekorV2.IsNull() && !data.UseRekorV2.IsUnknown() {
+		useRekorV2 = data.UseRekorV2.ValueBool()
+	}
+
 	opts := &ProviderOpts{
 		ropts:                       ropts,
 		keychain:                    kc,
@@ -235,6 +259,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		defaultAttestationEntryType: attestationEntryType,
 		defaultSignatureFormat:      defaultSignatureFormat,
 		timeout:                     timeout,
+		useRekorV2:                  useRekorV2,
 		signers:                     map[string]*fulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
 	}
