@@ -240,7 +240,7 @@ func SignBundle(ctx context.Context, conflict string, annotations map[string]any
 			return fmt.Errorf("signing bundle for %q: %w", digest.String(), err)
 		}
 
-		if err := ociremote.WriteAttestationNewBundleFormat(digest, bundleBytes, ctypes.CosignSignPredicateType, opts...); err != nil {
+		if err := writeBundleReferrer(digest, bundleBytes, ctypes.CosignSignPredicateType, nil, ropt); err != nil {
 			return fmt.Errorf("writing sign bundle for %q: %w", digest.String(), err)
 		}
 	}
@@ -250,6 +250,8 @@ func SignBundle(ctx context.Context, conflict string, annotations map[string]any
 
 // AttestBundle creates attestations using the cosign v3 bundle format
 // and writes them as OCI referrers. See SignBundle for conflict semantics.
+// Statements may carry a verbatim subject descriptor (Statement.SubjectDescriptor)
+// for subjects that are absent from the target repository.
 func AttestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer *BundleSigner, ropt []remote.Option) error {
 	if len(statements) == 0 {
 		return nil
@@ -281,7 +283,7 @@ func AttestBundle(ctx context.Context, conflict string, statements []*types.Stat
 			return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
 		}
 
-		if err := ociremote.WriteAttestationNewBundleFormat(stmt.Digest, bundleBytes, predicateType, ociOpts...); err != nil {
+		if err := writeBundleReferrer(stmt.Digest, bundleBytes, predicateType, stmt.SubjectDescriptor, ropt); err != nil {
 			return fmt.Errorf("writing attestation bundle for %q: %w", stmt.Digest.String(), err)
 		}
 	}
