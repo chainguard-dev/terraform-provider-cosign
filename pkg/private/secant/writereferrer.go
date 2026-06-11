@@ -82,7 +82,26 @@ func writeBundleReferrer(d name.Digest, bundleBytes []byte, predicateType string
 		return err
 	}
 
-	manifest := referrerManifest{
+	manifest := newReferrerManifest(configDesc, bundleDesc, subject, bundleMediaType, predicateType)
+
+	manifestBytes, err := manifest.RawManifest()
+	if err != nil {
+		return fmt.Errorf("marshaling referrer manifest: %w", err)
+	}
+	manifestDigest, _, err := v1.SHA256(bytes.NewReader(manifestBytes))
+	if err != nil {
+		return fmt.Errorf("digesting referrer manifest: %w", err)
+	}
+	if err := remote.Put(d.Digest(manifestDigest.String()), manifest, ropt...); err != nil {
+		return fmt.Errorf("uploading referrer manifest for %q: %w", d.String(), err)
+	}
+	return nil
+}
+
+// newReferrerManifest assembles the OCI 1.1 referrer manifest for a bundle
+// attestation, mirroring cosign's layout (see writeBundleReferrer).
+func newReferrerManifest(configDesc, bundleDesc v1.Descriptor, subject *v1.Descriptor, bundleMediaType, predicateType string) referrerManifest {
+	return referrerManifest{
 		Manifest: v1.Manifest{
 			SchemaVersion: 2,
 			MediaType:     types.OCIManifestSchema1,
@@ -102,19 +121,6 @@ func writeBundleReferrer(d name.Digest, bundleBytes []byte, predicateType string
 		},
 		ArtifactType: bundleMediaType,
 	}
-
-	manifestBytes, err := manifest.RawManifest()
-	if err != nil {
-		return fmt.Errorf("marshaling referrer manifest: %w", err)
-	}
-	manifestDigest, _, err := v1.SHA256(bytes.NewReader(manifestBytes))
-	if err != nil {
-		return fmt.Errorf("digesting referrer manifest: %w", err)
-	}
-	if err := remote.Put(d.Digest(manifestDigest.String()), manifest, ropt...); err != nil {
-		return fmt.Errorf("uploading referrer manifest for %q: %w", d.String(), err)
-	}
-	return nil
 }
 
 // layerDescriptor builds an OCI descriptor for an already-constructed layer.

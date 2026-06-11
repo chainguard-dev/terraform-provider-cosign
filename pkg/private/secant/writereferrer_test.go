@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -171,6 +173,76 @@ func TestWriteBundleReferrerVerbatimSubject(t *testing.T) {
 	}
 	if got := manifest.Annotations[ociremote.BundlePredicateType]; got != testPredicateType {
 		t.Errorf("predicate type annotation = %q, want %q", got, testPredicateType)
+	}
+}
+
+// TestNewReferrerManifest compares the assembled manifest against the expected
+// layout wholesale. The created annotation is the only non-deterministic field:
+// it is checked to be well-formed RFC3339 and then copied into want.
+func TestNewReferrerManifest(t *testing.T) {
+	bundleMediaType, err := sgbundle.MediaTypeString("0.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configDigest, err := v1.NewHash("sha256:" + strings.Repeat("11", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configDesc := v1.Descriptor{
+		MediaType: types.MediaType("application/vnd.oci.image.config.v1+json"),
+		Digest:    configDigest,
+		Size:      2,
+	}
+
+	bundleDigest, err := v1.NewHash("sha256:" + strings.Repeat("22", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleDesc := v1.Descriptor{
+		MediaType: types.MediaType(bundleMediaType),
+		Digest:    bundleDigest,
+		Size:      int64(len(testBundleBytes)),
+	}
+
+	subjectDigest, err := v1.NewHash("sha256:" + strings.Repeat("ab", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := &v1.Descriptor{
+		MediaType: types.OCIManifestSchema1,
+		Digest:    subjectDigest,
+	}
+
+	got := newReferrerManifest(configDesc, bundleDesc, subject, bundleMediaType, testPredicateType)
+
+	created := got.Annotations["org.opencontainers.image.created"]
+	if _, err := time.Parse(time.RFC3339, created); err != nil {
+		t.Errorf("created annotation %q is not RFC3339: %v", created, err)
+	}
+
+	want := referrerManifest{
+		Manifest: v1.Manifest{
+			SchemaVersion: 2,
+			MediaType:     types.OCIManifestSchema1,
+			Config: v1.Descriptor{
+				MediaType:    types.MediaType("application/vnd.oci.empty.v1+json"),
+				ArtifactType: bundleMediaType,
+				Digest:       configDesc.Digest,
+				Size:         configDesc.Size,
+			},
+			Layers:  []v1.Descriptor{bundleDesc},
+			Subject: subject,
+			Annotations: map[string]string{
+				"org.opencontainers.image.created": created,
+				"dev.sigstore.bundle.content":      "dsse-envelope",
+				ociremote.BundlePredicateType:      testPredicateType,
+			},
+		},
+		ArtifactType: bundleMediaType,
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("referrer manifest mismatch (-want +got):\n%s", diff)
 	}
 }
 

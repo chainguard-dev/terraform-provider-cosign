@@ -9,6 +9,7 @@ require (
 	github.com/go-openapi/strfmt v0.26.3
 	github.com/go-openapi/swag/conv v0.26.0
 	github.com/google/certificate-transparency-go v1.3.3
+	github.com/google/go-cmp v0.7.0
 	github.com/google/go-containerregistry v0.21.6
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-cleanhttp v0.5.2
@@ -169,7 +170,6 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry/pkg/authn/k8schain v0.0.0-20260317232201-3888fb8f8738 // indirect
 	github.com/google/go-containerregistry/pkg/authn/kubernetes v0.0.0-20260317232201-3888fb8f8738 // indirect
 	github.com/google/go-github/v88 v88.0.0 // indirect
