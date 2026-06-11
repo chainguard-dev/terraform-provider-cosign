@@ -3,7 +3,6 @@ package secant
 import (
 	"encoding/json"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +13,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	sgbundle "github.com/sigstore/sigstore-go/pkg/bundle"
@@ -114,8 +114,8 @@ func TestWriteBundleReferrerParity(t *testing.T) {
 	}
 	want := normalizeManifest(t, raws[0])
 	for _, raw := range raws[1:] {
-		if got := normalizeManifest(t, raw); !reflect.DeepEqual(got, want) {
-			t.Errorf("referrer manifests diverge:\ngot:  %v\nwant: %v", got, want)
+		if diff := cmp.Diff(want, normalizeManifest(t, raw)); diff != "" {
+			t.Errorf("referrer manifests diverge (-want +got):\n%s", diff)
 		}
 	}
 }
@@ -145,20 +145,11 @@ func TestWriteBundleReferrerVerbatimSubject(t *testing.T) {
 		t.Fatalf("expected 1 referrer, got %d", len(raws))
 	}
 
-	var manifest struct {
-		v1.Manifest
-		ArtifactType string `json:"artifactType"`
-	}
-	if err := json.Unmarshal(raws[0], &manifest); err != nil {
+	var got referrerManifest
+	if err := json.Unmarshal(raws[0], &got); err != nil {
 		t.Fatal(err)
 	}
 
-	if manifest.Subject == nil {
-		t.Fatal("referrer manifest has no subject")
-	}
-	if !reflect.DeepEqual(manifest.Subject, subject) {
-		t.Errorf("subject not verbatim:\ngot:  %+v\nwant: %+v", manifest.Subject, subject)
-	}
 	// The synthetic descriptor must serialize an explicit zero size.
 	if !strings.Contains(string(raws[0]), `"size":0`) {
 		t.Errorf("expected explicit \"size\":0 in subject descriptor: %s", raws[0])
@@ -168,11 +159,42 @@ func TestWriteBundleReferrerVerbatimSubject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ArtifactType != bundleMediaType {
-		t.Errorf("artifactType = %q, want %q", manifest.ArtifactType, bundleMediaType)
+	configDesc, err := layerDescriptor(static.NewLayer([]byte("{}"), "application/vnd.oci.image.config.v1+json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := manifest.Annotations[ociremote.BundlePredicateType]; got != testPredicateType {
-		t.Errorf("predicate type annotation = %q, want %q", got, testPredicateType)
+	bundleDesc, err := layerDescriptor(static.NewLayer(testBundleBytes, types.MediaType(bundleMediaType)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := got.Annotations["org.opencontainers.image.created"]
+	if _, err := time.Parse(time.RFC3339, created); err != nil {
+		t.Errorf("created annotation %q is not RFC3339: %v", created, err)
+	}
+
+	want := referrerManifest{
+		Manifest: v1.Manifest{
+			SchemaVersion: 2,
+			MediaType:     types.OCIManifestSchema1,
+			Config: v1.Descriptor{
+				MediaType:    types.MediaType("application/vnd.oci.empty.v1+json"),
+				ArtifactType: bundleMediaType,
+				Digest:       configDesc.Digest,
+				Size:         configDesc.Size,
+			},
+			Layers:  []v1.Descriptor{bundleDesc},
+			Subject: subject,
+			Annotations: map[string]string{
+				"org.opencontainers.image.created": created,
+				"dev.sigstore.bundle.content":      "dsse-envelope",
+				ociremote.BundlePredicateType:      testPredicateType,
+			},
+		},
+		ArtifactType: bundleMediaType,
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("referrer manifest mismatch (-want +got):\n%s", diff)
 	}
 }
 
