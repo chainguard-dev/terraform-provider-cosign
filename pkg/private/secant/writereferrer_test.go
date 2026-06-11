@@ -1,7 +1,9 @@
 package secant
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -36,13 +38,9 @@ func setupTestRepo(t *testing.T) name.Repository {
 	return repo
 }
 
-func pushRandomImage(t *testing.T, repo name.Repository) name.Digest {
+func pushImage(t *testing.T, repo name.Repository, img v1.Image) name.Digest {
 	t.Helper()
 
-	img, err := random.Image(1024, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := remote.Write(repo.Tag("latest"), img); err != nil {
 		t.Fatal(err)
 	}
@@ -93,30 +91,37 @@ func normalizeManifest(t *testing.T, raw []byte) map[string]any {
 
 // TestWriteBundleReferrerParity pins writeBundleReferrer's nil-subject output to
 // cosign's WriteAttestationNewBundleFormat for the life of the fork: modulo the
-// created timestamp, the two must produce identical referrer manifests.
+// created timestamp, the two must produce identical referrer manifests. Each
+// implementation writes into its own repository (holding the same image) so the
+// test always compares exactly two independently-written manifests, with no
+// registry dedup when both land in the same second.
 func TestWriteBundleReferrerParity(t *testing.T) {
-	repo := setupTestRepo(t)
-	d := pushRandomImage(t, repo)
+	img, err := random.Image(1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cosignD := pushImage(t, setupTestRepo(t), img)
+	forkD := pushImage(t, setupTestRepo(t), img)
 
-	if err := ociremote.WriteAttestationNewBundleFormat(d, testBundleBytes, testPredicateType); err != nil {
+	if err := ociremote.WriteAttestationNewBundleFormat(cosignD, testBundleBytes, testPredicateType); err != nil {
 		t.Fatalf("cosign WriteAttestationNewBundleFormat: %v", err)
 	}
-	if err := writeBundleReferrer(d, testBundleBytes, testPredicateType, nil, nil); err != nil {
+	if err := writeBundleReferrer(forkD, testBundleBytes, testPredicateType, nil, nil); err != nil {
 		t.Fatalf("writeBundleReferrer: %v", err)
 	}
 
-	// If both writes land in the same second the manifests are byte-identical
-	// and the registry dedups them into a single referrer; otherwise they
-	// differ only in the created annotation.
-	raws := referrerManifests(t, d)
-	if len(raws) == 0 {
-		t.Fatal("no referrers found")
+	cosignRaws := referrerManifests(t, cosignD)
+	if len(cosignRaws) != 1 {
+		t.Fatalf("expected 1 cosign referrer, got %d", len(cosignRaws))
 	}
-	want := normalizeManifest(t, raws[0])
-	for _, raw := range raws[1:] {
-		if diff := cmp.Diff(want, normalizeManifest(t, raw)); diff != "" {
-			t.Errorf("referrer manifests diverge (-want +got):\n%s", diff)
-		}
+	forkRaws := referrerManifests(t, forkD)
+	if len(forkRaws) != 1 {
+		t.Fatalf("expected 1 fork referrer, got %d", len(forkRaws))
+	}
+
+	want := normalizeManifest(t, cosignRaws[0])
+	if diff := cmp.Diff(want, normalizeManifest(t, forkRaws[0])); diff != "" {
+		t.Errorf("referrer manifests diverge (-cosign +fork):\n%s", diff)
 	}
 }
 
@@ -151,7 +156,13 @@ func TestWriteBundleReferrerVerbatimSubject(t *testing.T) {
 	}
 
 	// The synthetic descriptor must serialize an explicit zero size.
-	if !strings.Contains(string(raws[0]), `"size":0`) {
+	var rawFields struct {
+		Subject map[string]json.RawMessage `json:"subject"`
+	}
+	if err := json.Unmarshal(raws[0], &rawFields); err != nil {
+		t.Fatal(err)
+	}
+	if size, ok := rawFields.Subject["size"]; !ok || string(size) != "0" {
 		t.Errorf("expected explicit \"size\":0 in subject descriptor: %s", raws[0])
 	}
 
@@ -173,28 +184,31 @@ func TestWriteBundleReferrerVerbatimSubject(t *testing.T) {
 		t.Errorf("created annotation %q is not RFC3339: %v", created, err)
 	}
 
-	want := referrerManifest{
-		Manifest: v1.Manifest{
-			SchemaVersion: 2,
-			MediaType:     types.OCIManifestSchema1,
-			Config: v1.Descriptor{
-				MediaType:    types.MediaType("application/vnd.oci.empty.v1+json"),
-				ArtifactType: bundleMediaType,
-				Digest:       configDesc.Digest,
-				Size:         configDesc.Size,
-			},
-			Layers:  []v1.Descriptor{bundleDesc},
-			Subject: subject,
-			Annotations: map[string]string{
-				"org.opencontainers.image.created": created,
-				"dev.sigstore.bundle.content":      "dsse-envelope",
-				ociremote.BundlePredicateType:      testPredicateType,
-			},
-		},
-		ArtifactType: bundleMediaType,
-	}
+	// The constructor is pinned field-by-field in TestNewReferrerManifest, so it
+	// serves as want here: this asserts the write path lands the constructed
+	// manifest in the registry unchanged.
+	want := newReferrerManifest(configDesc, bundleDesc, subject, bundleMediaType, testPredicateType)
+	want.Annotations["org.opencontainers.image.created"] = created
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("referrer manifest mismatch (-want +got):\n%s", diff)
+	}
+
+	// The bundle blob itself must round-trip through the registry.
+	layer, err := remote.Layer(repo.Digest(bundleDesc.Digest.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := layer.Compressed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	gotBundle, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotBundle, testBundleBytes) {
+		t.Errorf("bundle blob round-trip mismatch:\ngot:  %s\nwant: %s", gotBundle, testBundleBytes)
 	}
 }
 
