@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
@@ -304,7 +307,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		return false, fmt.Errorf("unknown conflict mode: %q", conflict)
 	}
 
-	matching, err := matchingBundleReferrers(digest, predicateType, opts)
+	matching, err := matchingBundleReferrers(digest, predicateType, opts, ropt)
 	if err != nil {
 		return false, err
 	}
@@ -338,8 +341,8 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 const bundleMediaTypePrefix = "application/vnd.dev.sigstore.bundle"
 
 // matchingBundleReferrers returns referrer descriptors for digest that are
-// sigstore bundles annotated with the given predicate type.
-func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option) ([]v1.Descriptor, error) {
+// sigstore bundles carrying predicateType.
+func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option, ropt []remote.Option) ([]v1.Descriptor, error) {
 	idx, err := ociremote.Referrers(digest, "", opts...)
 	if err != nil {
 		return nil, fmt.Errorf("listing referrers: %w", err)
@@ -347,14 +350,43 @@ func matchingBundleReferrers(digest name.Digest, predicateType string, opts []oc
 
 	var matching []v1.Descriptor
 	for _, m := range idx.Manifests {
-		if !strings.HasPrefix(m.ArtifactType, bundleMediaTypePrefix) {
-			continue
+		ok, err := bundleReferrerMatches(digest.Repository, m, predicateType, ropt)
+		if err != nil {
+			return nil, err
 		}
-		if m.Annotations[ociremote.BundlePredicateType] == predicateType {
+		if ok {
 			matching = append(matching, m)
 		}
 	}
 	return matching, nil
+}
+
+// bundleReferrerMatches reports whether referrer descriptor m is a sigstore
+// bundle carrying predicateType. When the index descriptor has both
+// artifactType and the annotation, that answers the question directly. But
+// annotations on referrers-index descriptors are only a spec SHOULD, and some
+// registries omit them (go-containerregistry does, both in its in-memory
+// registry and in its tag-schema fallback). When the annotation is missing it
+// fetches the referrer manifest, which always carries both. This keeps
+// matching correct on those registries instead of silently matching nothing.
+func bundleReferrerMatches(repo name.Repository, m v1.Descriptor, predicateType string, ropt []remote.Option) (bool, error) {
+	if strings.HasPrefix(m.ArtifactType, bundleMediaTypePrefix) {
+		if pt, ok := m.Annotations[ociremote.BundlePredicateType]; ok {
+			return pt == predicateType, nil
+		}
+	}
+	d, err := remote.Get(repo.Digest(m.Digest.String()), ropt...)
+	if err != nil {
+		// A 404 is a dangling fallback-index entry whose manifest was already
+		// deleted; ignore it rather than fail the whole prune.
+		var terr *transport.Error
+		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.HasPrefix(d.ArtifactType, bundleMediaTypePrefix) &&
+		d.Annotations[ociremote.BundlePredicateType] == predicateType, nil
 }
 
 // referrerDSSEPayload fetches the given referrer manifest, reads its first
