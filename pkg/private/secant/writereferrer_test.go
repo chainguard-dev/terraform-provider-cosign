@@ -26,9 +26,22 @@ const testPredicateType = "https://slsa.dev/provenance/v1"
 var testBundleBytes = []byte(`{"this":"stands in for a serialized sigstore bundle"}`)
 
 func setupTestRepo(t *testing.T) name.Repository {
+	return newTestRepo(t, true)
+}
+
+// newTestRepo stands up an in-memory registry, with or without native Referrers
+// API support, and returns a repository under it.
+//
+// With referrers support disabled, go-containerregistry tracks referrers via
+// the sha256-<subject> fallback-tag index. That is the configuration which
+// exercises the commitSubjectReferrers fallback path and the stale-index bug.
+// With it enabled, the registry computes referrers dynamically and maintains no
+// fallback tag, so the REPLACE delete+rewrite cycle has no client-side index to
+// leave dangling — the control case that must also stay clean.
+func newTestRepo(t *testing.T, referrersSupport bool) name.Repository {
 	t.Helper()
 
-	srv := httptest.NewServer(registry.New(registry.WithReferrersSupport(true)))
+	srv := httptest.NewServer(registry.New(registry.WithReferrersSupport(referrersSupport)))
 	t.Cleanup(srv.Close)
 
 	repo, err := name.NewRepository(strings.TrimPrefix(srv.URL, "http://") + "/test-repo")
