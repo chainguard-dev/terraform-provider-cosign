@@ -21,7 +21,7 @@ This attests the provided image digest with cosign.
 
 ### Optional
 
-- `conflict` (String) How to handle conflicting predicate values
+- `conflict` (String) How to handle conflicting predicate values. One of `APPEND` (always write a new attestation), `REPLACE` (replace existing attestations of the same predicate type), `SKIPSAME` (default; skip the write when an identical attestation already exists), or `REPUSHSAME` (re-push the existing attestation when an identical one exists so the registry records a push event, otherwise behaves like `SKIPSAME`).
 - `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev). Only honored when signature_format is 'legacy'.
 - `predicate` (String, Deprecated) The JSON body of the in-toto predicate's claim.
 - `predicate_file` (Block List, Deprecated) The path and sha256 hex of the predicate to attest. (see [below for nested schema](#nestedblock--predicate_file))

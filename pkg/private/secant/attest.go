@@ -235,8 +235,10 @@ func Attest(ctx context.Context, conflict string, statements []*types.Statement,
 		return fmt.Errorf("attesting: %w", err)
 	}
 
-	// If the signed entity hasn't changed, we can skip the write entirely
-	if se == newSE {
+	// If the signed entity hasn't changed, we can skip the write entirely, unless
+	// the caller asked to re-push identical attestations (REPUSHSAME) so the
+	// registry records a push event.
+	if se == newSE && conflict != RePushSame {
 		return nil
 	}
 	// Publish the attestations associated with this entity
@@ -326,7 +328,7 @@ func newStatements[S sigsubset](statements []*types.Statement, sigs []S, conflic
 			continue
 		}
 
-		if conflict != SkipSame {
+		if conflict != SkipSame && conflict != RePushSame {
 			return nil, fmt.Errorf("unexpected value for 'conflict': %q", conflict)
 		}
 

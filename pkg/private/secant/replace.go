@@ -14,6 +14,10 @@ const (
 	Replace = "REPLACE"
 	// SkipSame skips writing identical signatures but otherwise replaces signatures on the image.
 	SkipSame = "SKIPSAME"
+	// RePushSame re-pushes the existing signature when an identical one is already
+	// present (without producing a new signature) so the registry records a push
+	// event, and otherwise behaves like SkipSame.
+	RePushSame = "REPUSHSAME"
 	// Append appends signatures on the image.
 	Append = "APPEND"
 )
