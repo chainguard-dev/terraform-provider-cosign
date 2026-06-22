@@ -18,8 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         terraform:
-          - "1.13.*"
           - "1.14.*"
+          - "1.15.*"
 
     permissions:
       contents: read
