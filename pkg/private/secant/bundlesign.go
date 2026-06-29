@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
 	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
@@ -325,13 +327,92 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		return true, nil
 	}
 
+	deleted := make([]v1.Hash, 0, len(matching))
 	for _, m := range matching {
 		ref := digest.Digest(m.Digest.String())
 		if err := remote.Delete(ref, ropt...); err != nil {
 			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}
+		deleted = append(deleted, m.Digest)
+	}
+
+	// On a registry without the native Referrers API, go-containerregistry
+	// tracks referrers in a client-maintained sha256-<subject> fallback-tag
+	// index. remote.Delete removes the referrer manifest but does NOT prune the
+	// descriptor from that index (a documented gap in go-containerregistry's
+	// Pusher.Delete). The next writeBundleReferrer would then read the stale
+	// index, append the new referrer, and re-PUT an index still referencing the
+	// just-deleted manifest, which a registry that validates index members
+	// rejects with MANIFEST_UNKNOWN. Prune the deleted descriptors now so the
+	// subsequent write commits a consistent index.
+	if err := pruneFallbackReferrers(digest, deleted, ropt); err != nil {
+		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
 	}
 	return true, nil
+}
+
+// pruneFallbackReferrers removes the given descriptors from the sha256-<subject>
+// fallback-tag index, if one exists. It is a no-op on registries that implement
+// the native Referrers API (they compute referrers dynamically and maintain no
+// fallback tag, so the GET below 404s). The fallback tag layout mirrors
+// go-containerregistry's unexported fallbackTag: the subject digest with its
+// ":" replaced by "-", as a tag on the subject's repository.
+func pruneFallbackReferrers(subject name.Digest, deleted []v1.Hash, ropt []remote.Option) error {
+	if len(deleted) == 0 {
+		return nil
+	}
+
+	tag := subject.Context().Tag(strings.Replace(subject.DigestStr(), ":", "-", 1))
+	desc, err := remote.Get(tag, ropt...)
+	if err != nil {
+		if isReferrerNotFound(err) {
+			// No fallback index: native Referrers API, or nothing left to prune.
+			return nil
+		}
+		return fmt.Errorf("fetching fallback index %q: %w", tag.String(), err)
+	}
+
+	var im v1.IndexManifest
+	if err := json.Unmarshal(desc.Manifest, &im); err != nil {
+		return fmt.Errorf("parsing fallback index %q: %w", tag.String(), err)
+	}
+
+	drop := make(map[v1.Hash]struct{}, len(deleted))
+	for _, h := range deleted {
+		drop[h] = struct{}{}
+	}
+	kept := im.Manifests[:0]
+	changed := false
+	for _, m := range im.Manifests {
+		if _, ok := drop[m.Digest]; ok {
+			changed = true
+			continue
+		}
+		kept = append(kept, m)
+	}
+	if !changed {
+		return nil
+	}
+	im.Manifests = kept
+
+	if err := remote.Put(tag, &fallbackIndex{im: im}, ropt...); err != nil {
+		return fmt.Errorf("rewriting fallback index %q: %w", tag.String(), err)
+	}
+	return nil
+}
+
+// fallbackIndex serializes a pruned fallback-tag index for a manifest PUT,
+// mirroring go-containerregistry's unexported fallbackTaggable.
+type fallbackIndex struct {
+	im v1.IndexManifest
+}
+
+func (f *fallbackIndex) RawManifest() ([]byte, error)            { return json.Marshal(f.im) }
+func (f *fallbackIndex) MediaType() (ggcrtypes.MediaType, error) { return ggcrtypes.OCIImageIndex, nil }
+
+func isReferrerNotFound(err error) bool {
+	var terr *transport.Error
+	return errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound
 }
 
 // bundleMediaTypePrefix matches sigstore bundle media types across all
@@ -341,7 +422,13 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 const bundleMediaTypePrefix = "application/vnd.dev.sigstore.bundle"
 
 // matchingBundleReferrers returns referrer descriptors for digest that are
-// sigstore bundles carrying predicateType.
+// sigstore bundles carrying predicateType. It trusts the referrers-index
+// descriptor when the registry populated both artifactType and the
+// predicateType annotation, and otherwise consults the referrer manifest, which
+// is authoritative on every registry. This keeps REPLACE/SKIPSAME correct on
+// registries that omit those fields from the referrers index — notably
+// go-containerregistry's tag-schema fallback, whose index descriptors carry an
+// artifactType but no annotations.
 func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option, ropt []remote.Option) ([]v1.Descriptor, error) {
 	idx, err := ociremote.Referrers(digest, "", opts...)
 	if err != nil {
@@ -361,32 +448,49 @@ func matchingBundleReferrers(digest name.Digest, predicateType string, opts []oc
 	return matching, nil
 }
 
-// bundleReferrerMatches reports whether referrer descriptor m is a sigstore
-// bundle carrying predicateType. When the index descriptor has both
-// artifactType and the annotation, that answers the question directly. But
-// annotations on referrers-index descriptors are only a spec SHOULD, and some
-// registries omit them (go-containerregistry does, both in its in-memory
-// registry and in its tag-schema fallback). When the annotation is missing it
-// fetches the referrer manifest, which always carries both. This keeps
-// matching correct on those registries instead of silently matching nothing.
+// bundleReferrerMatches reports whether the referrer described by m is a
+// sigstore bundle carrying predicateType.
 func bundleReferrerMatches(repo name.Repository, m v1.Descriptor, predicateType string, ropt []remote.Option) (bool, error) {
+	// Fast path: the index descriptor already carries what we need (zot, GAR, …),
+	// so no per-referrer manifest fetch is required.
 	if strings.HasPrefix(m.ArtifactType, bundleMediaTypePrefix) {
 		if pt, ok := m.Annotations[ociremote.BundlePredicateType]; ok {
 			return pt == predicateType, nil
 		}
 	}
-	d, err := remote.Get(repo.Digest(m.Digest.String()), ropt...)
+
+	// Slow path: the registry dropped artifactType and/or annotations from the
+	// index, or reported the config descriptor's media type as the artifactType
+	// (the OCI referrers spec permits this, and cosign bundles use the empty-config
+	// media type, so a real bundle can surface here with a non-bundle
+	// artifactType). The referrer manifest is authoritative.
+	at, ann, err := referrerManifestInfo(repo, m.Digest, ropt)
 	if err != nil {
-		// A 404 is a dangling fallback-index entry whose manifest was already
-		// deleted; ignore it rather than fail the whole prune.
-		var terr *transport.Error
-		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+		if isReferrerNotFound(err) {
+			// Dangling fallback-index entry for an already-deleted referrer.
 			return false, nil
 		}
 		return false, err
 	}
-	return strings.HasPrefix(d.ArtifactType, bundleMediaTypePrefix) &&
-		d.Annotations[ociremote.BundlePredicateType] == predicateType, nil
+	return strings.HasPrefix(at, bundleMediaTypePrefix) &&
+		ann[ociremote.BundlePredicateType] == predicateType, nil
+}
+
+// referrerManifestInfo fetches a referrer manifest and returns its top-level
+// artifactType and annotations.
+func referrerManifestInfo(repo name.Repository, descDigest v1.Hash, ropt []remote.Option) (string, map[string]string, error) {
+	d, err := remote.Get(repo.Digest(descDigest.String()), ropt...)
+	if err != nil {
+		return "", nil, err
+	}
+	var mf struct {
+		ArtifactType string            `json:"artifactType"`
+		Annotations  map[string]string `json:"annotations"`
+	}
+	if err := json.Unmarshal(d.Manifest, &mf); err != nil {
+		return "", nil, fmt.Errorf("parsing referrer manifest %s: %w", descDigest, err)
+	}
+	return mf.ArtifactType, mf.Annotations, nil
 }
 
 // referrerDSSEPayload fetches the given referrer manifest, reads its first
