@@ -49,9 +49,12 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 		// Don't add any options. Without replace op or dupe detector, we will append.
 	case Replace:
 		signOpts = append(signOpts, mutate.WithReplaceOp(replaceSignatures{}))
-	case SkipSame:
+	case SkipSame, RePushSame:
 		// We intentionally avoid mutate.WithDupeDetector so that we can skip uploading
-		// anything to rekor in case of a duplicate.
+		// anything to rekor in case of a duplicate. On a duplicate we return the entity
+		// unchanged; SkipSame and RePushSame behave identically here because the caller
+		// (Sign) unconditionally re-writes the signature image to the registry either
+		// way, so the existing signature is re-pushed without a new rekor entry.
 		match, err := findMatchingSignature(currentSigs, payload)
 		if err != nil {
 			return nil, fmt.Errorf("finding matching signatures: %w", err)

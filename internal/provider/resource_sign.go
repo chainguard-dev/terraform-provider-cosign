@@ -68,7 +68,7 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"conflict": schema.StringAttribute{
-				MarkdownDescription: "How to handle conflicting signature values",
+				MarkdownDescription: "How to handle conflicting signature values. One of `APPEND` (always write a new signature), `REPLACE` (replace existing signatures), `SKIPSAME` (default; skip the write when an identical signature already exists), or `REPUSHSAME` (re-push the existing signature when an identical one exists so the registry records a push event, otherwise behaves like `SKIPSAME`).",
 				Computed:            true,
 				Optional:            true,
 				Required:            false,

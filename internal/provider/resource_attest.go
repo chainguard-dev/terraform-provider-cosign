@@ -94,7 +94,7 @@ func (r *AttestResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"conflict": schema.StringAttribute{
-				MarkdownDescription: "How to handle conflicting predicate values",
+				MarkdownDescription: "How to handle conflicting predicate values. One of `APPEND` (always write a new attestation), `REPLACE` (replace existing attestations of the same predicate type), `SKIPSAME` (default; skip the write when an identical attestation already exists), or `REPUSHSAME` (re-push the existing attestation when an identical one exists so the registry records a push event, otherwise behaves like `SKIPSAME`).",
 				Computed:            true,
 				Optional:            true,
 				Required:            false,
@@ -496,7 +496,7 @@ type ConflictValidator struct{}
 var _ validator.String = ConflictValidator{}
 
 func (v ConflictValidator) Description(context.Context) string {
-	return "value must be one of (`APPEND`, `REPLACE`, `SKIPSAME`)"
+	return "value must be one of (`APPEND`, `REPLACE`, `SKIPSAME`, `REPUSHSAME`)"
 }
 func (v ConflictValidator) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
 
@@ -507,7 +507,7 @@ func (v ConflictValidator) ValidateString(ctx context.Context, req validator.Str
 	val := req.ConfigValue.ValueString()
 
 	switch val {
-	case "APPEND", "REPLACE", "SKIPSAME":
+	case "APPEND", "REPLACE", "SKIPSAME", "REPUSHSAME":
 		return
 	default:
 		resp.Diagnostics.AddError("error validating conflict", v.Description(ctx))

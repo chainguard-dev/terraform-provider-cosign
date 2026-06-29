@@ -195,8 +195,9 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 // SignBundle signs container images using the cosign v3 bundle format
 // and writes them as OCI referrers. conflict matches the semantics of Sign:
 // APPEND (or empty) always writes, SKIPSAME skips when an existing referrer
-// has an identical payload, REPLACE deletes existing referrers with matching
-// predicate type before writing.
+// has an identical payload, REPUSHSAME re-pushes the existing referrer verbatim
+// when one has an identical payload (otherwise writes), REPLACE deletes existing
+// referrers with matching predicate type before writing.
 func SignBundle(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, imgs []name.Digest, ropt []remote.Option) error {
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
@@ -227,11 +228,17 @@ func SignBundle(ctx context.Context, conflict string, annotations map[string]any
 			return fmt.Errorf("marshaling statement: %w", err)
 		}
 
-		shouldWrite, err := resolveBundleConflict(digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
+		action, matched, err := resolveBundleConflict(digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
 		if err != nil {
 			return fmt.Errorf("resolving conflict for %q: %w", digest.String(), err)
 		}
-		if !shouldWrite {
+		switch action {
+		case bundleSkip:
+			continue
+		case bundleRePush:
+			if err := repushBundleReferrer(digest, matched, ropt); err != nil {
+				return fmt.Errorf("re-pushing sign bundle for %q: %w", digest.String(), err)
+			}
 			continue
 		}
 
@@ -270,11 +277,17 @@ func AttestBundle(ctx context.Context, conflict string, statements []*types.Stat
 			return err
 		}
 
-		shouldWrite, err := resolveBundleConflict(stmt.Digest, predicateType, stmt.Payload, conflict, ropt, ociOpts)
+		action, matched, err := resolveBundleConflict(stmt.Digest, predicateType, stmt.Payload, conflict, ropt, ociOpts)
 		if err != nil {
 			return fmt.Errorf("resolving conflict for %q: %w", stmt.Digest.String(), err)
 		}
-		if !shouldWrite {
+		switch action {
+		case bundleSkip:
+			continue
+		case bundleRePush:
+			if err := repushBundleReferrer(stmt.Digest, matched, ropt); err != nil {
+				return fmt.Errorf("re-pushing attestation bundle for %q: %w", stmt.Digest.String(), err)
+			}
 			continue
 		}
 
@@ -296,42 +309,62 @@ func AttestBundle(ctx context.Context, conflict string, statements []*types.Stat
 	return nil
 }
 
+// bundleAction is the outcome of resolveBundleConflict: skip the write entirely,
+// sign and write a fresh bundle, or re-push an existing identical referrer.
+type bundleAction int
+
+const (
+	// bundleSkip means an identical referrer already exists and nothing should
+	// be written.
+	bundleSkip bundleAction = iota
+	// bundleWrite means the caller should sign and write a fresh bundle.
+	bundleWrite
+	// bundleRePush means an identical referrer already exists and should be
+	// re-pushed verbatim (see repushBundleReferrer); the matched referrer digest
+	// is returned alongside.
+	bundleRePush
+)
+
 // resolveBundleConflict applies the conflict policy to a pending bundle write.
-// It returns whether the caller should proceed with the write, after
-// optionally deleting existing referrers for REPLACE. The write may still be
-// needed under SKIPSAME if no existing referrer has an identical payload.
-func resolveBundleConflict(digest name.Digest, predicateType string, newPayload []byte, conflict string, ropt []remote.Option, opts []ociremote.Option) (bool, error) {
+// It returns the action the caller should take, after optionally deleting
+// existing referrers for REPLACE. For bundleRePush it also returns the digest of
+// the matching existing referrer to re-push. A fresh write may still be needed
+// under SKIPSAME / REPUSHSAME if no existing referrer has an identical payload.
+func resolveBundleConflict(digest name.Digest, predicateType string, newPayload []byte, conflict string, ropt []remote.Option, opts []ociremote.Option) (bundleAction, v1.Hash, error) {
 	switch conflict {
 	case "", Append:
-		return true, nil
-	case SkipSame, Replace:
+		return bundleWrite, v1.Hash{}, nil
+	case SkipSame, RePushSame, Replace:
 	default:
-		return false, fmt.Errorf("unknown conflict mode: %q", conflict)
+		return bundleSkip, v1.Hash{}, fmt.Errorf("unknown conflict mode: %q", conflict)
 	}
 
 	matching, err := matchingBundleReferrers(digest, predicateType, opts, ropt)
 	if err != nil {
-		return false, err
+		return bundleSkip, v1.Hash{}, err
 	}
 
-	if conflict == SkipSame {
+	if conflict == SkipSame || conflict == RePushSame {
 		for _, m := range matching {
 			payload, err := referrerDSSEPayload(digest.Repository, m.Digest, ropt)
 			if err != nil {
-				return false, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
+				return bundleSkip, v1.Hash{}, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
 			}
 			if bytes.Equal(payload, newPayload) {
-				return false, nil
+				if conflict == RePushSame {
+					return bundleRePush, m.Digest, nil
+				}
+				return bundleSkip, v1.Hash{}, nil
 			}
 		}
-		return true, nil
+		return bundleWrite, v1.Hash{}, nil
 	}
 
 	deleted := make([]v1.Hash, 0, len(matching))
 	for _, m := range matching {
 		ref := digest.Digest(m.Digest.String())
 		if err := remote.Delete(ref, ropt...); err != nil {
-			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
+			return bundleSkip, v1.Hash{}, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}
 		deleted = append(deleted, m.Digest)
 	}
@@ -348,7 +381,24 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 	if err := pruneFallbackReferrers(digest, deleted, ropt); err != nil {
 		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
 	}
-	return true, nil
+	return bundleWrite, v1.Hash{}, nil
+}
+
+// repushBundleReferrer re-uploads an existing referrer (manifest, config, and
+// bundle blob) verbatim under its original digest. The bytes are unchanged, so
+// the referrer's digest is preserved, but the manifest PUT makes the registry
+// record a push event without producing a new signature. Used by REPUSHSAME when
+// an identical bundle already exists.
+func repushBundleReferrer(subject name.Digest, referrer v1.Hash, ropt []remote.Option) error {
+	ref := subject.Digest(referrer.String())
+	img, err := remote.Image(ref, ropt...)
+	if err != nil {
+		return fmt.Errorf("fetching existing referrer %s: %w", referrer, err)
+	}
+	if err := remote.Write(ref, img, ropt...); err != nil {
+		return fmt.Errorf("re-pushing referrer %s: %w", referrer, err)
+	}
+	return nil
 }
 
 // pruneFallbackReferrers removes the given descriptors from the sha256-<subject>
