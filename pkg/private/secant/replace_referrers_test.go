@@ -2,11 +2,17 @@ package secant
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
@@ -145,7 +151,7 @@ func bundleN(n int) []byte {
 
 // TestReplaceNoDangling drives two consecutive REPLACE writes for the same
 // subject + predicate type and asserts that exactly one consistent referrer
-// remains afterward, on both registry topologies.
+// remains afterward, on each registry variant.
 //
 // On a registry WITHOUT native Referrers API support this reproduces the bug
 // where REPLACE deletes the prior referrer manifest but leaves a dangling
@@ -162,14 +168,15 @@ func bundleN(n int) []byte {
 // without needing a real Fulcio/Rekor signer.
 func TestReplaceNoDangling(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		referrersSupport bool
+		name    string
+		newRepo func(t *testing.T) name.Repository
 	}{
-		{"fallback tag index", false},
-		{"native referrers api", true},
+		{"fallback tag index", func(t *testing.T) name.Repository { return newTestRepo(t, false) }},
+		{"native referrers api", func(t *testing.T) name.Repository { return newTestRepo(t, true) }},
+		{"fallback tag index with strict orphan rules", func(t *testing.T) name.Repository { return newStrictTestRepo(t, registry.WithReferrersSupport(false)) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newTestRepo(t, tc.referrersSupport)
+			repo := tc.newRepo(t)
 
 			img, err := random.Image(1024, 1)
 			if err != nil {
@@ -213,10 +220,10 @@ func TestReplaceNoDangling(t *testing.T) {
 
 // TestPruneFallbackReferrersClearsDangling isolates the fallback-index dangling
 // bug from the referrer-matching bug. It writes a referrer, deletes its manifest
-// the way resolveBundleConflict's REPLACE branch does (remote.Delete, which does
-// not touch the fallback index), and then verifies that a fresh write succeeds.
-// It is inherently fallback-specific: a native-referrers registry has no
-// fallback index to leave dangling.
+// out of band (remote.Delete, which does not touch the fallback index), and
+// then verifies that pruning clears the dangling entry and a fresh write
+// succeeds. It is inherently fallback-specific: a native-referrers registry has
+// no fallback index to leave dangling.
 //
 // Without pruning, the second write's commitSubjectReferrers reads the stale
 // sha256-<subject> index (still listing the deleted referrer), re-PUTs it with
@@ -236,7 +243,7 @@ func TestPruneFallbackReferrersClearsDangling(t *testing.T) {
 		t.Fatalf("first writeBundleReferrer: %v", err)
 	}
 
-	// Find and delete it by digest, mirroring resolveBundleConflict's delete loop.
+	// Find and delete it by digest, leaving its fallback-index entry dangling.
 	raws := referrerManifests(t, subject)
 	if len(raws) != 1 {
 		t.Fatalf("expected 1 referrer after first write, got %d", len(raws))
@@ -437,5 +444,190 @@ func assertFallbackIndexConsistent(t *testing.T, subject name.Digest) {
 		if _, err := remote.Get(subject.Context().Digest(desc.Digest.String())); err != nil {
 			t.Errorf("fallback index references missing manifest %s: %v", desc.Digest, err)
 		}
+	}
+}
+
+// strictRegistry wraps go-containerregistry's in-memory registry with two
+// deletion invariants that some registries enforce so that no delete leaves a
+// dangling reference, as Artifact Registry does:
+//   - A manifest that any tag points to cannot be deleted by digest
+//     (DANGLING_TAG).
+//   - A manifest listed as a member of any live index (tagged or not)
+//     cannot be deleted (DANGLING_PARENT_IMAGE).
+type strictRegistry struct {
+	inner http.Handler
+	// host is this server's own address, dialed by the invariant checks.
+	host string
+
+	mu sync.Mutex
+	// live manifest digests by repo, remembered because the registry API
+	// cannot enumerate untagged manifests.
+	live map[string]map[string]bool
+}
+
+// newStrictTestRepo stands up a strictRegistry over the in-memory registry
+// and returns a repository under it.
+func newStrictTestRepo(t *testing.T, opts ...registry.Option) name.Repository {
+	t.Helper()
+
+	s := &strictRegistry{
+		inner: registry.New(opts...),
+		live:  map[string]map[string]bool{},
+	}
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+	s.host = strings.TrimPrefix(srv.URL, "http://")
+
+	repo, err := name.NewRepository(s.host + "/test-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func (s *strictRegistry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	repo, ref, isManifest := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/manifests/")
+	if !isManifest {
+		s.inner.ServeHTTP(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		s.inner.ServeHTTP(w, r)
+		// The registry sets the digest header only on successful PUTs.
+		if digest := w.Header().Get("Docker-Content-Digest"); digest != "" {
+			s.mu.Lock()
+			if s.live[repo] == nil {
+				s.live[repo] = map[string]bool{}
+			}
+			s.live[repo][digest] = true
+			s.mu.Unlock()
+		}
+
+	case http.MethodDelete:
+		if code, msg := s.deleteBlocked(repo, ref); code != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"errors":[{"code":%q,"message":%q}]}`, code, msg)
+			return
+		}
+		s.inner.ServeHTTP(w, r)
+		// Deleted, or 404 and never was live: either way ref is gone.
+		s.mu.Lock()
+		delete(s.live[repo], ref)
+		s.mu.Unlock()
+
+	default:
+		s.inner.ServeHTTP(w, r)
+	}
+}
+
+// deleteBlocked reports the registry error, if any, for deleting ref from
+// repoPath, by querying the registry itself.
+func (s *strictRegistry) deleteBlocked(repoPath, ref string) (code, message string) {
+	if !strings.HasPrefix(ref, "sha256:") {
+		return "", ""
+	}
+	repo, err := name.NewRepository(s.host + "/" + repoPath)
+	if err != nil {
+		return "", ""
+	}
+
+	if tags, err := remote.List(repo); err == nil {
+		for _, tag := range tags {
+			if desc, err := remote.Head(repo.Tag(tag)); err == nil && desc.Digest.String() == ref {
+				return "DANGLING_TAG", "manifest is still referenced by tag " + tag
+			}
+		}
+	}
+
+	s.mu.Lock()
+	live := make([]string, 0, len(s.live[repoPath]))
+	for digest := range s.live[repoPath] {
+		if digest != ref {
+			live = append(live, digest)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, digest := range live {
+		desc, err := remote.Get(repo.Digest(digest))
+		if err != nil || !desc.MediaType.IsIndex() {
+			continue
+		}
+		idx, err := desc.ImageIndex()
+		if err != nil {
+			continue
+		}
+		im, err := idx.IndexManifest()
+		if err != nil {
+			continue
+		}
+		for _, m := range im.Manifests {
+			if m.Digest.String() == ref {
+				return "DANGLING_PARENT_IMAGE", "manifest is still referenced by parent index " + digest
+			}
+		}
+	}
+	return "", ""
+}
+
+// TestStrictRegistryNoOrphans asserts strictRegistry enforces its deletion
+// invariants: a tagged manifest cannot be deleted by digest, an index member
+// cannot be deleted while the index lives (tagged or not) and deleting the
+// index unblocks it.
+func TestStrictRegistryNoOrphans(t *testing.T) {
+	repo := newStrictTestRepo(t)
+
+	img, err := random.Image(1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := repo.Digest(h.String())
+
+	// WriteIndex pushes img as an untagged member of the tagged index,
+	// mirroring a referrer manifest under the fallback index.
+	idx := mutate.AppendManifests(empty.Index, mutate.IndexAddendum{Add: img})
+	if err := remote.WriteIndex(repo.Tag("idx"), idx); err != nil {
+		t.Fatal(err)
+	}
+	idxDigest, err := idx.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Tagged parent blocks the member delete.
+	err = remote.Delete(child)
+	if err == nil || !strings.Contains(err.Error(), "DANGLING_PARENT_IMAGE") {
+		t.Fatalf("expected DANGLING_PARENT_IMAGE deleting member of tagged index, got: %v", err)
+	}
+
+	// A tagged manifest cannot be deleted by digest.
+	err = remote.Delete(repo.Digest(idxDigest.String()))
+	if err == nil || !strings.Contains(err.Error(), "DANGLING_TAG") {
+		t.Fatalf("expected DANGLING_TAG deleting tagged index by digest, got: %v", err)
+	}
+
+	// Move the tag to an empty index: the original index is untagged now but
+	// must still block the member delete.
+	if err := remote.WriteIndex(repo.Tag("idx"), empty.Index); err != nil {
+		t.Fatal(err)
+	}
+	err = remote.Delete(child)
+	if err == nil || !strings.Contains(err.Error(), "DANGLING_PARENT_IMAGE") {
+		t.Fatalf("expected DANGLING_PARENT_IMAGE deleting member of untagged index, got: %v", err)
+	}
+
+	// Deleting the untagged index unblocks the member.
+	if err := remote.Delete(repo.Digest(idxDigest.String())); err != nil {
+		t.Fatalf("deleting untagged index: %v", err)
+	}
+	if err := remote.Delete(child); err != nil {
+		t.Fatalf("deleting member after its parent index was deleted: %v", err)
 	}
 }

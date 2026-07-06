@@ -327,38 +327,49 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		return true, nil
 	}
 
-	deleted := make([]v1.Hash, 0, len(matching))
+	toDelete := make([]v1.Hash, 0, len(matching))
+	for _, m := range matching {
+		toDelete = append(toDelete, m.Digest)
+	}
+
+	// On a registry without the native Referrers API, go-containerregistry
+	// tracks referrers in a client-maintained sha256-<subject> fallback-tag
+	// index, which remote.Delete does not maintain (a documented gap in
+	// go-containerregistry's Pusher.Delete). The index must be pruned before
+	// the deletes, not after: some registries (e.g. Artifact Registry) refuse
+	// to delete a manifest that a live index still references. The same order
+	// also satisfies registries that instead validate index members at PUT
+	// time, since the pruned index only lists manifests that still exist.
+	if err := pruneFallbackReferrers(digest, toDelete, ropt); err != nil {
+		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
+	}
+
 	for _, m := range matching {
 		ref := digest.Digest(m.Digest.String())
 		if err := remote.Delete(ref, ropt...); err != nil {
 			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}
-		deleted = append(deleted, m.Digest)
-	}
-
-	// On a registry without the native Referrers API, go-containerregistry
-	// tracks referrers in a client-maintained sha256-<subject> fallback-tag
-	// index. remote.Delete removes the referrer manifest but does NOT prune the
-	// descriptor from that index (a documented gap in go-containerregistry's
-	// Pusher.Delete). The next writeBundleReferrer would then read the stale
-	// index, append the new referrer, and re-PUT an index still referencing the
-	// just-deleted manifest, which a registry that validates index members
-	// rejects with MANIFEST_UNKNOWN. Prune the deleted descriptors now so the
-	// subsequent write commits a consistent index.
-	if err := pruneFallbackReferrers(digest, deleted, ropt); err != nil {
-		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
 	}
 	return true, nil
 }
 
 // pruneFallbackReferrers removes the given descriptors from the sha256-<subject>
-// fallback-tag index, if one exists. It is a no-op on registries that implement
-// the native Referrers API (they compute referrers dynamically and maintain no
+// fallback-tag index, if one exists, so that the referrer manifests they name
+// can be deleted afterwards. It is a no-op on registries that implement the
+// native Referrers API (they compute referrers dynamically and maintain no
 // fallback tag, so the GET below 404s). The fallback tag layout mirrors
 // go-containerregistry's unexported fallbackTag: the subject digest with its
 // ":" replaced by "-", as a tag on the subject's repository.
-func pruneFallbackReferrers(subject name.Digest, deleted []v1.Hash, ropt []remote.Option) error {
-	if len(deleted) == 0 {
+//
+// The pruned index — possibly with zero members — is PUT at the tag first, and
+// only then is the superseded index deleted, by digest. Both steps and their
+// order matter on registries with strict orphan rules: an index blocks
+// deletion of its members for as long as it exists, even once untagged, so
+// re-pointing the tag alone would not unblock the caller's deletes; and a
+// tagged manifest cannot be deleted by digest, so the tag must move off the
+// superseded index before it can be deleted.
+func pruneFallbackReferrers(subject name.Digest, toDelete []v1.Hash, ropt []remote.Option) error {
+	if len(toDelete) == 0 {
 		return nil
 	}
 
@@ -377,8 +388,8 @@ func pruneFallbackReferrers(subject name.Digest, deleted []v1.Hash, ropt []remot
 		return fmt.Errorf("parsing fallback index %q: %w", tag.String(), err)
 	}
 
-	drop := make(map[v1.Hash]struct{}, len(deleted))
-	for _, h := range deleted {
+	drop := make(map[v1.Hash]struct{}, len(toDelete))
+	for _, h := range toDelete {
 		drop[h] = struct{}{}
 	}
 	kept := im.Manifests[:0]
@@ -397,6 +408,10 @@ func pruneFallbackReferrers(subject name.Digest, deleted []v1.Hash, ropt []remot
 
 	if err := remote.Put(tag, &fallbackIndex{im: im}, ropt...); err != nil {
 		return fmt.Errorf("rewriting fallback index %q: %w", tag.String(), err)
+	}
+	// A concurrent replacer may have deleted the superseded index already.
+	if err := remote.Delete(subject.Context().Digest(desc.Digest.String()), ropt...); err != nil && !isReferrerNotFound(err) {
+		return fmt.Errorf("deleting superseded fallback index %s: %w", desc.Digest, err)
 	}
 	return nil
 }
