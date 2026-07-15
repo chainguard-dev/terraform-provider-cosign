@@ -318,6 +318,12 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		for _, m := range matching {
 			payload, err := referrerDSSEPayload(digest.Repository, m.Digest, ropt)
 			if err != nil {
+				// A stale referrers-index entry (e.g. Artifact Registry's index
+				// lagging a bulk deletion) describes a manifest that no longer
+				// exists; it cannot match the new payload.
+				if isReferrerNotFound(err) {
+					continue
+				}
 				return false, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
 			}
 			if bytes.Equal(payload, newPayload) {
@@ -330,9 +336,12 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 	deleted := make([]v1.Hash, 0, len(matching))
 	for _, m := range matching {
 		ref := digest.Digest(m.Digest.String())
-		if err := remote.Delete(ref, ropt...); err != nil {
+		if err := remote.Delete(ref, ropt...); err != nil && !isReferrerNotFound(err) {
 			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}
+		// A NOT_FOUND delete means a stale referrers-index entry whose manifest
+		// is already gone — the outcome REPLACE wants. Record it as deleted so
+		// pruneFallbackReferrers also drops it from a fallback-tag index.
 		deleted = append(deleted, m.Digest)
 	}
 

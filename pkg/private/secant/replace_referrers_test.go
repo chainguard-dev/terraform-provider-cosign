@@ -416,6 +416,106 @@ func TestBundleReferrerMatches(t *testing.T) {
 	}
 }
 
+// TestResolveBundleConflict_StaleReferrersIndex reproduces a referrers index
+// that lags a bulk deletion (observed on Artifact Registry): the index still
+// describes a deleted referrer manifest, with artifactType and predicate-type
+// annotation fully populated, so bundleReferrerMatches classifies the ghost on
+// the fast path without ever noticing the manifest is gone. REPLACE must treat
+// the resulting NOT_FOUND delete as already-done rather than failing the whole
+// write, and SKIPSAME must not fail on (or match) the ghost's unreadable
+// payload. Pre-fix, both paths error and the caller retries into the same
+// stale index forever.
+//
+// The in-memory registry's native referrers handler computes its index from
+// live manifests and cannot serve a stale entry, so the ghost is staged on the
+// fallback-tag topology: rewrite the sha256-<subject> index descriptor into
+// the fully-populated shape AR serves, then delete the manifest out from under
+// it (remote.Delete leaves fallback indexes untouched).
+func TestResolveBundleConflict_StaleReferrersIndex(t *testing.T) {
+	payload := []byte(`{"_type":"https://in-toto.io/Statement/v1"}`)
+
+	stageStaleIndex := func(t *testing.T) name.Digest {
+		t.Helper()
+
+		repo := newTestRepo(t, false)
+		img, err := random.Image(1024, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		subject := pushImage(t, repo, img)
+
+		if err := writeBundleReferrer(subject, bundleWithDSSEPayload(t, payload), testPredicateType, nil, nil); err != nil {
+			t.Fatalf("writing referrer: %v", err)
+		}
+
+		tag := subject.Context().Tag(strings.Replace(subject.DigestStr(), ":", "-", 1))
+		idx, err := remote.Index(tag)
+		if err != nil {
+			t.Fatalf("fetching fallback index: %v", err)
+		}
+		im, err := idx.IndexManifest()
+		if err != nil {
+			t.Fatalf("parsing fallback index: %v", err)
+		}
+		if len(im.Manifests) != 1 {
+			t.Fatalf("expected 1 fallback index entry, got %d", len(im.Manifests))
+		}
+
+		bundleMediaType, err := sgbundle.MediaTypeString("0.3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		im.Manifests[0].ArtifactType = bundleMediaType
+		im.Manifests[0].Annotations = map[string]string{ociremote.BundlePredicateType: testPredicateType}
+		if err := remote.Put(tag, &fallbackIndex{im: *im}); err != nil {
+			t.Fatalf("rewriting fallback index: %v", err)
+		}
+
+		if err := remote.Delete(subject.Context().Digest(im.Manifests[0].Digest.String())); err != nil {
+			t.Fatalf("deleting referrer manifest: %v", err)
+		}
+		return subject
+	}
+
+	opts := []ociremote.Option{ociremote.WithRemoteOptions()}
+
+	t.Run("replace tolerates ghost delete", func(t *testing.T) {
+		subject := stageStaleIndex(t)
+
+		shouldWrite, err := resolveBundleConflict(subject, testPredicateType, bundleN(2), Replace, nil, opts)
+		if err != nil {
+			t.Fatalf("resolveBundleConflict(Replace) on stale index: %v", err)
+		}
+		if !shouldWrite {
+			t.Fatal("expected REPLACE to request a write")
+		}
+
+		// The ghost must also have been pruned from the index so the
+		// subsequent write commits a consistent one.
+		if err := writeBundleReferrer(subject, bundleN(2), testPredicateType, nil, nil); err != nil {
+			t.Fatalf("writeBundleReferrer after stale REPLACE: %v", err)
+		}
+		if got := referrerManifests(t, subject); len(got) != 1 {
+			t.Fatalf("expected exactly 1 referrer after REPLACE, got %d", len(got))
+		}
+		assertFallbackIndexConsistent(t, subject)
+	})
+
+	t.Run("skipsame ignores ghost", func(t *testing.T) {
+		subject := stageStaleIndex(t)
+
+		// The ghost's payload was identical, but a deleted referrer cannot
+		// satisfy SKIPSAME — the write must proceed.
+		shouldWrite, err := resolveBundleConflict(subject, testPredicateType, payload, SkipSame, nil, opts)
+		if err != nil {
+			t.Fatalf("resolveBundleConflict(SkipSame) on stale index: %v", err)
+		}
+		if !shouldWrite {
+			t.Error("expected SKIPSAME to write when the only identical referrer is a ghost")
+		}
+	})
+}
+
 // assertFallbackIndexConsistent fetches the sha256-<subject> fallback-tag index
 // directly and verifies every descriptor it lists resolves to a real manifest.
 // On a registry with native Referrers API support there is no fallback tag, so
