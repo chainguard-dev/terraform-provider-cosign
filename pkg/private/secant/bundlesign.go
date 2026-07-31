@@ -297,9 +297,12 @@ func AttestBundle(ctx context.Context, conflict string, statements []*types.Stat
 }
 
 // resolveBundleConflict applies the conflict policy to a pending bundle write.
-// It returns whether the caller should proceed with the write, after
-// optionally deleting existing referrers for REPLACE. The write may still be
-// needed under SKIPSAME if no existing referrer has an identical payload.
+// It returns whether the caller should proceed with the write, after deleting
+// the existing referrers the write supersedes. REPLACE deletes every matching
+// referrer; SKIPSAME keeps one whose payload is byte-identical to the pending
+// write (skipping the write) and deletes the rest. Both modes converge on a
+// single bundle per predicate type, so accumulation cannot outlive the next
+// write even on repositories whose retention never reaps referrer manifests.
 func resolveBundleConflict(digest name.Digest, predicateType string, newPayload []byte, conflict string, ropt []remote.Option, opts []ociremote.Option) (bool, error) {
 	switch conflict {
 	case "", Append:
@@ -314,6 +317,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		return false, err
 	}
 
+	var keep *v1.Hash
 	if conflict == SkipSame {
 		for _, m := range matching {
 			payload, err := referrerDSSEPayload(digest.Repository, m.Digest, ropt)
@@ -327,21 +331,26 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 				return false, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
 			}
 			if bytes.Equal(payload, newPayload) {
-				return false, nil
+				d := m.Digest
+				keep = &d
+				break
 			}
 		}
-		return true, nil
 	}
 
 	deleted := make([]v1.Hash, 0, len(matching))
 	for _, m := range matching {
+		if keep != nil && m.Digest == *keep {
+			continue
+		}
 		ref := digest.Digest(m.Digest.String())
 		if err := remote.Delete(ref, ropt...); err != nil && !isReferrerNotFound(err) {
 			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}
 		// A NOT_FOUND delete means a stale referrers-index entry whose manifest
-		// is already gone — the outcome REPLACE wants. Record it as deleted so
-		// pruneFallbackReferrers also drops it from a fallback-tag index.
+		// is already gone — the outcome the conflict policy wants. Record it as
+		// deleted so pruneFallbackReferrers also drops it from a fallback-tag
+		// index.
 		deleted = append(deleted, m.Digest)
 	}
 
@@ -357,7 +366,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 	if err := pruneFallbackReferrers(digest, deleted, ropt); err != nil {
 		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
 	}
-	return true, nil
+	return keep == nil, nil
 }
 
 // pruneFallbackReferrers removes the given descriptors from the sha256-<subject>

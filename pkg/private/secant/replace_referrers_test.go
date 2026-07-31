@@ -1,6 +1,7 @@
 package secant
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -98,9 +99,10 @@ func TestMatchingBundleReferrers_ManifestSourced(t *testing.T) {
 	}
 }
 
-// TestResolveBundleConflict_SkipSame confirms SKIPSAME skips an identical
-// payload but writes a novel one, on a registry whose referrers index omits
-// annotations.
+// TestResolveBundleConflict_SkipSame confirms SKIPSAME converges on a single
+// bundle per predicate type: an identical payload is kept (and the write
+// skipped) while every other matching referrer is deleted, and a novel
+// payload deletes all priors before requesting the write.
 func TestResolveBundleConflict_SkipSame(t *testing.T) {
 	repo := setupTestRepo(t)
 
@@ -114,10 +116,17 @@ func TestResolveBundleConflict_SkipSame(t *testing.T) {
 	if err := writeBundleReferrer(subject, bundleWithDSSEPayload(t, payload), testPredicateType, nil, nil); err != nil {
 		t.Fatalf("writing referrer: %v", err)
 	}
+	// A superseded prior from an earlier write with a different payload,
+	// mirroring the bundle-per-epoch accumulation a retention policy that
+	// cannot see referrer manifests never reaps.
+	if err := writeBundleReferrer(subject, bundleWithDSSEPayload(t, []byte(`{"_type":"stale"}`)), testPredicateType, nil, nil); err != nil {
+		t.Fatalf("writing superseded referrer: %v", err)
+	}
 
 	opts := []ociremote.Option{ociremote.WithRemoteOptions()}
 
-	// Identical payload: SKIPSAME must skip the write.
+	// Identical payload present: SKIPSAME must skip the write, keep the
+	// identical bundle, and delete the superseded one.
 	shouldWrite, err := resolveBundleConflict(subject, testPredicateType, payload, SkipSame, nil, opts)
 	if err != nil {
 		t.Fatalf("resolveBundleConflict(SkipSame, identical): %v", err)
@@ -125,14 +134,33 @@ func TestResolveBundleConflict_SkipSame(t *testing.T) {
 	if shouldWrite {
 		t.Error("expected SKIPSAME to skip an identical payload")
 	}
+	matching, err := matchingBundleReferrers(subject, testPredicateType, opts, nil)
+	if err != nil {
+		t.Fatalf("matchingBundleReferrers after identical: %v", err)
+	}
+	if len(matching) != 1 {
+		t.Fatalf("expected the identical bundle to remain alone, got %d referrers", len(matching))
+	}
+	if kept, err := referrerDSSEPayload(subject.Repository, matching[0].Digest, nil); err != nil {
+		t.Fatalf("reading kept referrer: %v", err)
+	} else if !bytes.Equal(kept, payload) {
+		t.Errorf("kept payload: got = %s, want = %s", kept, payload)
+	}
 
-	// Different payload: SKIPSAME must request the write.
+	// Different payload: SKIPSAME must delete the prior and request the write.
 	shouldWrite, err = resolveBundleConflict(subject, testPredicateType, []byte(`{"_type":"differs"}`), SkipSame, nil, opts)
 	if err != nil {
 		t.Fatalf("resolveBundleConflict(SkipSame, different): %v", err)
 	}
 	if !shouldWrite {
 		t.Error("expected SKIPSAME to write a novel payload")
+	}
+	remaining, err := matchingBundleReferrers(subject, testPredicateType, opts, nil)
+	if err != nil {
+		t.Fatalf("matchingBundleReferrers after different: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected SKIPSAME to delete superseded referrers, got %d remaining", len(remaining))
 	}
 }
 
