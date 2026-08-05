@@ -71,6 +71,28 @@ func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEn
 	return nil, errors.New("bad response from server")
 }
 
+// EntryToBundle converts a log entry into the Rekor bundle attached to a
+// signature. Cosign dropped its own copy in v3.1.2 along with the rest of the
+// Rekor v1 write path, but kept the RekorBundle and RekorPayload types this
+// returns, so only the constructor needed a home here.
+//
+// A nil return means the entry carried no verification material, and callers
+// treat that as "no bundle to attach".
+func EntryToBundle(entry *models.LogEntryAnon) *cbundle.RekorBundle {
+	if entry.Verification == nil {
+		return nil
+	}
+	return &cbundle.RekorBundle{
+		SignedEntryTimestamp: entry.Verification.SignedEntryTimestamp,
+		Payload: cbundle.RekorPayload{
+			Body:           entry.Body,
+			IntegratedTime: *entry.IntegratedTime,
+			LogIndex:       *entry.LogIndex,
+			LogID:          *entry.LogID,
+		},
+	}
+}
+
 // createLogEntryWithRetry retries create on transient transport errors. The
 // underlying retryablehttp client retries at the request level, but does not
 // catch errors that surface during response body decoding (notably HTTP/2
