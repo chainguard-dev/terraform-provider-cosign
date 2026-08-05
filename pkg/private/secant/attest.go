@@ -182,7 +182,7 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 			return nil, fmt.Errorf("uploading to rekor (predicate type %q): %w", statement.Type, err)
 		}
 
-		bundle := cbundle.EntryToBundle(entry)
+		bundle := tlog.EntryToBundle(entry)
 
 		predicateType, err := parsePredicateType(statement.Type)
 		if err != nil {
