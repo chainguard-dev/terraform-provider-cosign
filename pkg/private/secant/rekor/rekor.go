@@ -68,7 +68,7 @@ func AttachHashedRekord(ctx context.Context, rekorClient *client.Rekor, sig oci.
 		return nil, err
 	}
 
-	bundle := cbundle.EntryToBundle(entry)
+	bundle := tlog.EntryToBundle(entry)
 	return mutate.Signature(sig, mutate.WithBundle(bundle))
 }
 
