@@ -1,7 +1,9 @@
 name: Tests
 
 on:
-  pull_request_target:
+  # pull_request_target is deliberate: fork PRs need the OIDC token for the
+  # keyless signing tests, which plain pull_request does not grant them.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     branches:
       - "main"
   push:
