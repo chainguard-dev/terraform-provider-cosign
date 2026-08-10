@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	"github.com/prometheus/client_golang/prometheus"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
@@ -32,6 +33,21 @@ import (
 // createLogEntryWithRetry) to stay within rate limits. Defaults to 5 QPS with
 // a burst of 50.
 var RekorRateLimiter = rate.NewLimiter(5.0, 50)
+
+// RekorRateLimiterWaitSeconds records how long callers block acquiring tokens
+// from RekorRateLimiter, across all of its wait call sites. It is left
+// unregistered so only hosts that opt in via RegisterMetrics gather it.
+var RekorRateLimiterWaitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+	Name:    "secant_rekor_ratelimiter_wait_duration_seconds",
+	Help:    "Seconds spent blocked acquiring tokens from the Rekor rate limiter.",
+	Buckets: prometheus.DefBuckets,
+})
+
+// RegisterMetrics registers the tlog collectors with r. Hosts that scrape
+// metrics call this once; the Terraform provider never does.
+func RegisterMetrics(r prometheus.Registerer) error {
+	return r.Register(RekorRateLimiterWaitSeconds)
+}
 
 const createLogEntryMaxAttempts = 5
 
@@ -115,7 +131,10 @@ func createLogEntryWithRetry(ctx context.Context, create func() (*entries.Create
 			return nil, ctx.Err()
 		case <-time.After(backoff):
 		}
-		if err := RekorRateLimiter.Wait(ctx); err != nil {
+		start := time.Now()
+		err = RekorRateLimiter.Wait(ctx)
+		RekorRateLimiterWaitSeconds.Observe(time.Since(start).Seconds())
+		if err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 		backoff *= 2

@@ -8,8 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
 )
+
+func TestRegisterMetrics(t *testing.T) {
+	if err := RegisterMetrics(prometheus.NewRegistry()); err != nil {
+		t.Fatalf("RegisterMetrics: %v", err)
+	}
+}
 
 func TestIsRetryableRekorError(t *testing.T) {
 	for _, tc := range []struct {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"time"
 
 	rekordsse "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/dsse"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/intoto"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"github.com/sigstore/cosign/v3/pkg/cosign/attestation"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
@@ -41,6 +43,13 @@ var (
 // 5 QPS limit. Aliased to tlog.RekorRateLimiter so the same instance governs
 // both the pre-call waits here and the retry-time waits inside tlog.Upload.
 var RekorRateLimiter = tlog.RekorRateLimiter
+
+// RegisterMetrics registers secant's collectors with r. Hosts that scrape
+// metrics call this once (typically with prometheus.DefaultRegisterer); the
+// Terraform provider never does, so its observations stay uncollected.
+func RegisterMetrics(r prometheus.Registerer) error {
+	return tlog.RegisterMetrics(r)
+}
 
 // NewStatement generates a statement for use in Attest.
 func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types.Statement, error) {
@@ -105,7 +114,10 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 	if RekorRateLimiter != nil {
 		// Wait to ensure we don't hit Rekor rate limits.
 		// Wait up front for enough tokens to attest all statements to reduce likelihood of partial failure due to context cancellation.
-		if err := RekorRateLimiter.WaitN(ctx, len(statements)); err != nil {
+		start := time.Now()
+		err := RekorRateLimiter.WaitN(ctx, len(statements))
+		tlog.RekorRateLimiterWaitSeconds.Observe(time.Since(start).Seconds())
+		if err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
