@@ -23,7 +23,6 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
 	"github.com/sigstore/rekor/pkg/generated/models"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
-	"github.com/sigstore/sigstore/pkg/tuf"
 	"github.com/transparency-dev/merkle/proof"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"golang.org/x/time/rate"
@@ -178,7 +177,7 @@ func verifyTLogEntryOffline(_ context.Context, e *models.LogEntryAnon, rekorPubK
 	}
 	// Make sure all the rekorPubKeys are ecsda.PublicKeys
 	for k, v := range rekorPubKeys.Keys {
-		if _, ok := v.PubKey.(*ecdsa.PublicKey); !ok {
+		if _, ok := v.(*ecdsa.PublicKey); !ok {
 			return fmt.Errorf("rekor Public key for LogID %s is not type ecdsa.PublicKey", k)
 		}
 	}
@@ -224,9 +223,9 @@ func verifyTLogEntryOffline(_ context.Context, e *models.LogEntryAnon, rekorPubK
 	if !ok {
 		return errors.New("rekor log public key not found for payload. Check your TUF root (see cosign initialize) or set a custom key with env var SIGSTORE_REKOR_PUBLIC_KEY")
 	}
-	ecdsaPubKey, ok := pubKey.PubKey.(*ecdsa.PublicKey)
+	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
 	if !ok {
-		return fmt.Errorf("expected ECDSA public key, got %T", pubKey.PubKey)
+		return fmt.Errorf("expected ECDSA public key, got %T", pubKey)
 	}
 	if err := verifySET(payload, []byte(e.Verification.SignedEntryTimestamp), ecdsaPubKey); err != nil {
 		return fmt.Errorf("verifying signedEntryTimestamp: %w", err)
@@ -234,18 +233,11 @@ func verifyTLogEntryOffline(_ context.Context, e *models.LogEntryAnon, rekorPubK
 	return nil
 }
 
-// TransparencyLogPubKey contains the ECDSA verification key and the current status
-// of the key according to TUF metadata, whether it's active or expired.
-type transparencyLogPubKey struct {
-	PubKey crypto.PublicKey
-	Status tuf.StatusKind
-}
-
 // This is a map of TransparencyLog public keys indexed by log ID that's used
 // in verification.
 type trustedTransparencyLogPubKeys struct {
 	// A map of keys indexed by log ID
-	Keys map[string]transparencyLogPubKey
+	Keys map[string]crypto.PublicKey
 }
 
 func verifySET(bundlePayload cbundle.RekorPayload, signature []byte, pub *ecdsa.PublicKey) error {
@@ -275,19 +267,19 @@ func rekorPubsFromClient(rekorClient *client.Rekor) (*trustedTransparencyLogPubK
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch rekor public key from rekor: %w", err)
 	}
-	if err := publicKeys.AddTransparencyLogPubKey([]byte(pubOK.Payload), tuf.Active); err != nil {
+	if err := publicKeys.AddTransparencyLogPubKey([]byte(pubOK.Payload)); err != nil {
 		return nil, fmt.Errorf("constructRekorPubKey: %w", err)
 	}
 	return &publicKeys, nil
 }
 
 func newTrustedTransparencyLogPubKeys() trustedTransparencyLogPubKeys {
-	return trustedTransparencyLogPubKeys{Keys: make(map[string]transparencyLogPubKey, 0)}
+	return trustedTransparencyLogPubKeys{Keys: make(map[string]crypto.PublicKey, 0)}
 }
 
-// constructRekorPubkey returns a log ID and RekorPubKey from a given
-// byte-array representing the PEM-encoded Rekor key and a status.
-func (t *trustedTransparencyLogPubKeys) AddTransparencyLogPubKey(pemBytes []byte, status tuf.StatusKind) error {
+// AddTransparencyLogPubKey adds a PEM-encoded public key to the map, indexed
+// by its log ID.
+func (t *trustedTransparencyLogPubKeys) AddTransparencyLogPubKey(pemBytes []byte) error {
 	pubKey, err := cryptoutils.UnmarshalPEMToPublicKey(pemBytes)
 	if err != nil {
 		return err
@@ -296,7 +288,7 @@ func (t *trustedTransparencyLogPubKeys) AddTransparencyLogPubKey(pemBytes []byte
 	if err != nil {
 		return err
 	}
-	t.Keys[keyID] = transparencyLogPubKey{PubKey: pubKey, Status: status}
+	t.Keys[keyID] = pubKey
 	return nil
 }
 
