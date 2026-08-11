@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
 )
 
@@ -43,6 +44,8 @@ func TestIsRetryableRekorError(t *testing.T) {
 func TestCreateLogEntryWithRetry_RetriesTransient(t *testing.T) {
 	defer shrinkRetryBackoff(t)()
 
+	before := waitObservationCount(t)
+
 	var attempts int
 	transient := errors.New("stream error: stream ID 1; INTERNAL_ERROR; received from peer")
 
@@ -62,6 +65,22 @@ func TestCreateLogEntryWithRetry_RetriesTransient(t *testing.T) {
 	if attempts != 3 {
 		t.Errorf("attempts = %d, want 3", attempts)
 	}
+
+	// The rate limiter is waited on before each retry, so two failed attempts
+	// record two wait observations.
+	if got, want := waitObservationCount(t)-before, uint64(attempts-1); got != want {
+		t.Errorf("recorded %d wait observations, want %d", got, want)
+	}
+}
+
+// waitObservationCount returns how many samples rekorWaitSeconds has recorded.
+func waitObservationCount(t *testing.T) uint64 {
+	t.Helper()
+	var m dto.Metric
+	if err := rekorWaitSeconds.Write(&m); err != nil {
+		t.Fatalf("writing metric: %v", err)
+	}
+	return m.GetHistogram().GetSampleCount()
 }
 
 func TestCreateLogEntryWithRetry_StopsOnConflict(t *testing.T) {

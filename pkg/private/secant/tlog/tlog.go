@@ -32,21 +32,39 @@ import (
 // RekorRateLimiter throttles all calls to Rekor (including retries from
 // createLogEntryWithRetry) to stay within rate limits. Defaults to 5 QPS with
 // a burst of 50.
-var RekorRateLimiter = rate.NewLimiter(5.0, 50)
+var RekorRateLimiter = &RateLimiter{limiter: rate.NewLimiter(5.0, 50)}
 
-// RekorRateLimiterWaitSeconds records how long callers block acquiring tokens
-// from RekorRateLimiter, across all of its wait call sites. It is left
-// unregistered so only hosts that opt in via RegisterMetrics gather it.
-var RekorRateLimiterWaitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
-	Name:    "secant_rekor_ratelimiter_wait_duration_seconds",
+// rekorWaitSeconds is left unregistered so only hosts that opt in via
+// RegisterMetrics gather it.
+var rekorWaitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+	Name:    "secant_rekor_rate_limiter_wait_duration_seconds",
 	Help:    "Seconds spent blocked acquiring tokens from the Rekor rate limiter.",
-	Buckets: prometheus.DefBuckets,
+	Buckets: prometheus.ExponentialBuckets(0.001, 3, 12),
 })
 
 // RegisterMetrics registers the tlog collectors with r. Hosts that scrape
 // metrics call this once; the Terraform provider never does.
 func RegisterMetrics(r prometheus.Registerer) error {
-	return r.Register(RekorRateLimiterWaitSeconds)
+	return r.Register(rekorWaitSeconds)
+}
+
+// RateLimiter throttles acquires and records how long each one blocks.
+type RateLimiter struct {
+	limiter *rate.Limiter
+}
+
+func (r *RateLimiter) Wait(ctx context.Context) error {
+	start := time.Now()
+	err := r.limiter.Wait(ctx)
+	rekorWaitSeconds.Observe(time.Since(start).Seconds())
+	return err
+}
+
+func (r *RateLimiter) WaitN(ctx context.Context, n int) error {
+	start := time.Now()
+	err := r.limiter.WaitN(ctx, n)
+	rekorWaitSeconds.Observe(time.Since(start).Seconds())
+	return err
 }
 
 const createLogEntryMaxAttempts = 5
@@ -131,10 +149,7 @@ func createLogEntryWithRetry(ctx context.Context, create func() (*entries.Create
 			return nil, ctx.Err()
 		case <-time.After(backoff):
 		}
-		start := time.Now()
-		err = RekorRateLimiter.Wait(ctx)
-		RekorRateLimiterWaitSeconds.Observe(time.Since(start).Seconds())
-		if err != nil {
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 		backoff *= 2

@@ -5,10 +5,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor"
-	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -69,10 +67,7 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 	// We intentionally throttle after we've evaluated SKIP_SAME (so we don't throttle if we're not going to call Rekor)
 	// and before signing the payload (to ensure our signature is valid when uploading to Rekor)
 	if RekorRateLimiter != nil {
-		start := time.Now()
-		err := RekorRateLimiter.Wait(ctx)
-		tlog.RekorRateLimiterWaitSeconds.Observe(time.Since(start).Seconds())
-		if err != nil {
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}

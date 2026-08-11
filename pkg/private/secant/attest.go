@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"time"
 
 	rekordsse "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/dsse"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/models/intoto"
@@ -114,10 +113,7 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 	if RekorRateLimiter != nil {
 		// Wait to ensure we don't hit Rekor rate limits.
 		// Wait up front for enough tokens to attest all statements to reduce likelihood of partial failure due to context cancellation.
-		start := time.Now()
-		err := RekorRateLimiter.WaitN(ctx, len(statements))
-		tlog.RekorRateLimiterWaitSeconds.Observe(time.Since(start).Seconds())
-		if err != nil {
+		if err := RekorRateLimiter.WaitN(ctx, len(statements)); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
