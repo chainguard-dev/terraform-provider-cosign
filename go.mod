@@ -3,7 +3,7 @@ module github.com/chainguard-dev/terraform-provider-cosign
 go 1.26.4
 
 require (
-	github.com/chainguard-dev/terraform-provider-oci v0.1.7
+	github.com/chainguard-dev/terraform-provider-oci v0.1.8
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/go-openapi/runtime v0.33.0
 	github.com/go-openapi/strfmt v0.27.0
@@ -22,6 +22,7 @@ require (
 	github.com/hashicorp/terraform-plugin-testing v1.16.0
 	github.com/in-toto/attestation v1.2.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/prometheus/client_model v0.6.2
 	github.com/secure-systems-lab/go-securesystemslib v0.11.0
 	github.com/sigstore/cosign/v3 v3.1.1
 	github.com/sigstore/fulcio v1.8.8
@@ -249,7 +250,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/posener/complete v1.2.3 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.68.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/prometheus/statsd_exporter v0.22.8 // indirect
