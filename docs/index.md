@@ -83,3 +83,4 @@ resource "cosign_attest" "example" {
 | TF_COSIGN_CLIENT_SECRET |                                  | Configures Sigstore OAuth Client Secret.                                                       |
 | TF_COSIGN_REDIRECT_URL  |                                  | Configures Sigstore interactive OAuth redirect URL. If empty, a random localhost port is used. |
 | TF_COSIGN_DISABLE       |                                  | Disables all cosign operations.                                                                |
+| TF_COSIGN_CHAINGUARD_TOKEN_CACHE |                         | Sources OIDC tokens from the Chainguard token cache (`<user cache dir>/chainguard/<audience>/oidc-token`); an absolute path value overrides the cache root. When set, an unreadable token fails the operation instead of skipping signing. |
