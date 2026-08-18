@@ -10,6 +10,7 @@ import (
 
 	"github.com/sigstore/cosign/v3/pkg/providers"
 
+	_ "github.com/chainguard-dev/terraform-provider-cosign/internal/provider/chainguardcache"
 	_ "github.com/chainguard-dev/terraform-provider-cosign/internal/provider/interactive"
 	_ "github.com/sigstore/cosign/v3/pkg/providers/envvar"
 	_ "github.com/sigstore/cosign/v3/pkg/providers/filesystem"
