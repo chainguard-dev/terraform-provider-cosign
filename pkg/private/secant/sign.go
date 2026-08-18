@@ -86,17 +86,33 @@ func SignEntity(ctx context.Context, se oci.SignedEntity, subject name.Digest, c
 	return mutate.AttachSignatureToEntity(se, ociSig, signOpts...)
 }
 
+// SignOption customizes the behavior of Sign.
+type SignOption func(*signOptions)
+
+type signOptions struct {
+	recursive bool
+}
+
+// WithRecursive controls whether Sign fetches each digest and walks it,
+// signing every manifest it references (the default), or signs exactly the
+// digests it is given. Because signing non-recursively never fetches the
+// subject manifest, the digests do not need to exist in the registry yet.
+func WithRecursive(recursive bool) SignOption {
+	return func(o *signOptions) { o.recursive = recursive }
+}
+
 // Sign is roughly equivalent to cosign sign.
-func Sign(ctx context.Context, conflict string, annotations map[string]any, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option) error {
+// By default it fetches each digest and walks it recursively, signing every
+// manifest it references along the way. See WithRecursive.
+func Sign(ctx context.Context, conflict string, annotations map[string]any, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []name.Digest, ropt []remote.Option, sopts ...SignOption) error {
+	so := &signOptions{recursive: true}
+	for _, opt := range sopts {
+		opt(so)
+	}
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
 	for _, ref := range imgs {
-		se, err := ociremote.SignedEntity(ref, opts...)
-		if err != nil {
-			return fmt.Errorf("accessing entity: %w", err)
-		}
-
-		if err := walk.SignedEntity(ctx, se, func(ctx context.Context, se oci.SignedEntity) error {
+		signOne := func(ctx context.Context, se oci.SignedEntity) error {
 			// Get the digest for this entity in our walk.
 			digestable, ok := se.(interface{ Digest() (v1.Hash, error) })
 			if !ok {
@@ -113,8 +129,22 @@ func Sign(ctx context.Context, conflict string, annotations map[string]any, sv t
 			}
 			// Publish the signatures associated with this entity
 			return ociremote.WriteSignatures(digest.Repository, newSE, opts...)
-		}); err != nil {
-			return fmt.Errorf("recursively signing: %w", err)
+		}
+
+		if so.recursive {
+			se, err := ociremote.SignedEntity(ref, opts...)
+			if err != nil {
+				return fmt.Errorf("accessing entity: %w", err)
+			}
+			if err := walk.SignedEntity(ctx, se, signOne); err != nil {
+				return fmt.Errorf("recursively signing: %w", err)
+			}
+		} else {
+			// We don't actually need to access the remote entity to attach a
+			// signature to it, so we use a placeholder here.
+			if err := signOne(ctx, ociremote.SignedUnknown(ref, opts...)); err != nil {
+				return fmt.Errorf("signing %s: %w", ref, err)
+			}
 		}
 	}
 
