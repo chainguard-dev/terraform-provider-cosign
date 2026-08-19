@@ -14,13 +14,17 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/go-openapi/runtime"
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/sigstore/cosign/v3/pkg/oci"
@@ -36,7 +40,23 @@ import (
 
 func TestSignDigest(t *testing.T) {
 	ctx := context.Background()
-	repo := setupTestRepo(t)
+
+	// An in-memory registry that can be flipped to read-only, to prove that
+	// re-signing writes nothing.
+	reg := registry.New()
+	var readonly atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if readonly.Load() && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "registry is read-only", http.StatusMethodNotAllowed)
+			return
+		}
+		reg.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	repo, err := name.NewRepository(strings.TrimPrefix(srv.URL, "http://") + "/test-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// This digest is never pushed: fetching it would fail, so SignDigest
 	// succeeding proves it never touches the subject manifest.
@@ -67,7 +87,9 @@ func TestSignDigest(t *testing.T) {
 	}
 
 	// Signing the same digest again with SKIPSAME should match the existing
-	// signature and skip the rekor upload, leaving the single signature as is.
+	// signature and skip both the rekor upload and the signature write, so it
+	// succeeds even against a read-only registry.
+	readonly.Store(true)
 	if err := SignDigest(ctx, SkipSame, nil, signer, rekorClient, digest, nil); err != nil {
 		t.Fatalf("SignDigest() again = %v", err)
 	}

@@ -135,6 +135,10 @@ func SignDigest(ctx context.Context, conflict string, annotations map[string]any
 	if err != nil {
 		return fmt.Errorf("signing %s: %w", digest, err)
 	}
+	// If the signed entity hasn't changed, we can skip the write entirely
+	if newSE == se {
+		return nil
+	}
 	// Publish the signatures associated with this entity
 	if err := ociremote.WriteSignatures(digest.Repository, newSE, opts...); err != nil {
 		return fmt.Errorf("writing signatures for %s: %w", digest, err)
