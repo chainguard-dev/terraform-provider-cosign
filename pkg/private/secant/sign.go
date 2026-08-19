@@ -121,6 +121,32 @@ func Sign(ctx context.Context, conflict string, annotations map[string]any, sv t
 	return nil
 }
 
+// SignDigest is like Sign, but signs exactly the given digest without
+// fetching it or recursing into anything it references. Because the subject
+// manifest is never fetched, the digest does not need to exist in the registry
+// yet.
+func SignDigest(ctx context.Context, conflict string, annotations map[string]any, sv types.CosignerVerifier, rekorClient *client.Rekor, digest name.Digest, ropt []remote.Option) error {
+	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+
+	// We don't actually need to access the remote entity to attach a
+	// signature to it, so we use a placeholder here.
+	se := ociremote.SignedUnknown(digest, opts...)
+	newSE, err := SignEntity(ctx, se, digest, conflict, annotations, sv, rekorClient)
+	if err != nil {
+		return fmt.Errorf("signing %s: %w", digest, err)
+	}
+	// If the signed entity hasn't changed, we can skip the write entirely
+	if newSE == se {
+		return nil
+	}
+	// Publish the signatures associated with this entity
+	if err := ociremote.WriteSignatures(digest.Repository, newSE, opts...); err != nil {
+		return fmt.Errorf("writing signatures for %s: %w", digest, err)
+	}
+
+	return nil
+}
+
 type replaceSignatures struct{}
 
 func (r replaceSignatures) Replace(signatures oci.Signatures, o oci.Signature) (oci.Signatures, error) {
