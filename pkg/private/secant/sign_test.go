@@ -34,26 +34,27 @@ import (
 	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
 )
 
-func TestSignNonRecursive(t *testing.T) {
+func TestSignDigest(t *testing.T) {
 	ctx := context.Background()
 	repo := setupTestRepo(t)
 
-	// This digest is never pushed: fetching it would fail, so Sign succeeding
-	// proves the non-recursive mode never touches the subject manifest.
+	// This digest is never pushed: fetching it would fail, so SignDigest
+	// succeeding proves it never touches the subject manifest.
 	digest := repo.Digest("sha256:" + strings.Repeat("a", 64))
 
 	signer := newTestCosigner(t)
 	fakeEntries := &fakeRekorEntries{}
 	rekorClient := &client.Rekor{Entries: fakeEntries}
 
-	if err := Sign(ctx, SkipSame, nil, signer, rekorClient, []name.Digest{digest}, nil, WithRecursive(false)); err != nil {
-		t.Fatalf("Sign() = %v", err)
+	if err := SignDigest(ctx, SkipSame, nil, signer, rekorClient, digest, nil); err != nil {
+		t.Fatalf("SignDigest() = %v", err)
 	}
 
 	payloads := signaturePayloads(t, digest)
 	if len(payloads) != 1 {
 		t.Fatalf("got %d signatures, want 1", len(payloads))
 	}
+	// The stored payload should be a simple signing payload for our digest.
 	var sci sigPayload.SimpleContainerImage
 	if err := json.Unmarshal(payloads[0], &sci); err != nil {
 		t.Fatalf("unmarshaling payload: %v", err)
@@ -67,8 +68,8 @@ func TestSignNonRecursive(t *testing.T) {
 
 	// Signing the same digest again with SKIPSAME should match the existing
 	// signature and skip the rekor upload, leaving the single signature as is.
-	if err := Sign(ctx, SkipSame, nil, signer, rekorClient, []name.Digest{digest}, nil, WithRecursive(false)); err != nil {
-		t.Fatalf("Sign() again = %v", err)
+	if err := SignDigest(ctx, SkipSame, nil, signer, rekorClient, digest, nil); err != nil {
+		t.Fatalf("SignDigest() again = %v", err)
 	}
 	if fakeEntries.uploadCount != 1 {
 		t.Errorf("got %d rekor uploads after re-sign, want 1", fakeEntries.uploadCount)
@@ -151,7 +152,7 @@ func signaturePayloads(t *testing.T, digest name.Digest) [][]byte {
 }
 
 // testCosigner is a keyless signer using a self-signed certificate, just
-// enough to drive Sign in tests.
+// enough to drive signing in tests.
 type testCosigner struct {
 	signature.SignerVerifier
 	cert []byte
