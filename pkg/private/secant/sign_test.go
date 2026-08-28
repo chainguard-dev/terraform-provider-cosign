@@ -249,7 +249,15 @@ func (f *fakeRekorEntries) CreateLogEntry(params *entries.CreateLogEntryParams, 
 	}, nil
 }
 
+func (f *fakeRekorEntries) CreateLogEntryContext(ctx context.Context, params *entries.CreateLogEntryParams, opts ...entries.ClientOption) (*entries.CreateLogEntryCreated, error) {
+	return f.CreateLogEntry(params, opts...)
+}
+
 func (f *fakeRekorEntries) GetLogEntryByIndex(params *entries.GetLogEntryByIndexParams, opts ...entries.ClientOption) (*entries.GetLogEntryByIndexOK, error) {
+	return nil, errors.New("unimplemented")
+}
+
+func (f *fakeRekorEntries) GetLogEntryByIndexContext(ctx context.Context, params *entries.GetLogEntryByIndexParams, opts ...entries.ClientOption) (*entries.GetLogEntryByIndexOK, error) {
 	return nil, errors.New("unimplemented")
 }
 
@@ -257,10 +265,18 @@ func (f *fakeRekorEntries) GetLogEntryByUUID(params *entries.GetLogEntryByUUIDPa
 	return nil, errors.New("unimplemented")
 }
 
+func (f *fakeRekorEntries) GetLogEntryByUUIDContext(ctx context.Context, params *entries.GetLogEntryByUUIDParams, opts ...entries.ClientOption) (*entries.GetLogEntryByUUIDOK, error) {
+	return nil, errors.New("unimplemented")
+}
+
 func (f *fakeRekorEntries) SearchLogQuery(params *entries.SearchLogQueryParams, opts ...entries.ClientOption) (*entries.SearchLogQueryOK, error) {
 	return nil, errors.New("unimplemented")
 }
 
-func (f *fakeRekorEntries) SetTransport(transport runtime.ClientTransport) {}
+func (f *fakeRekorEntries) SearchLogQueryContext(ctx context.Context, params *entries.SearchLogQueryParams, opts ...entries.ClientOption) (*entries.SearchLogQueryOK, error) {
+	return nil, errors.New("unimplemented")
+}
+
+func (f *fakeRekorEntries) SetTransport(transport runtime.ContextualTransport) {}
 
 var _ entries.ClientService = (*fakeRekorEntries)(nil)
