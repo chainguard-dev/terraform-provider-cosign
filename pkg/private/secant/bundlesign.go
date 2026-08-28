@@ -111,7 +111,9 @@ func (bs *BundleSigner) signWithIDToken(ctx context.Context, content sign.Conten
 		return nil, fmt.Errorf("retrieving ID token: %w", err)
 	}
 
-	bundleBytes, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	// certChain is nil: the Fulcio-by-idToken path builds its own cert, and
+	// passing no chain preserves the pre-v3.1.3 SignData behavior.
+	bundleBytes, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
@@ -185,7 +187,9 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 	// Steady state: sign with the cached cert, skipping Fulcio. Safe to
 	// run unlocked because certPEM is a local copy and the keypair /
 	// signingConfig / trustedMaterial fields are immutable after init.
-	bundle, err := cbundle.SignData(ctx, content, bs.keypair, "", certPEM, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	// certChain is nil: signing with the cached leaf cert alone matches the
+	// pre-v3.1.3 behavior (SignData uses the chain only when one is supplied).
+	bundle, err := cbundle.SignData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
