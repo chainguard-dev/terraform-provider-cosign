@@ -47,7 +47,10 @@ var RekorRateLimiter = tlog.RekorRateLimiter
 // metrics call this once (typically with prometheus.DefaultRegisterer); the
 // Terraform provider never does, so its observations stay uncollected.
 func RegisterMetrics(r prometheus.Registerer) error {
-	return tlog.RegisterMetrics(r)
+	if err := tlog.RegisterMetrics(r); err != nil {
+		return err
+	}
+	return r.Register(bundleSignRetries)
 }
 
 // NewStatement generates a statement for use in Attest.

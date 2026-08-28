@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/tlog"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -22,6 +23,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
 	intotov1 "github.com/in-toto/attestation/go/v1"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
@@ -32,6 +34,27 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 )
+
+// BundleRateLimiter throttles bundle signing attempts (including retries) to
+// stay within Fulcio/Rekor rate limits. Defaults to 5 QPS with a burst of 50.
+// Aliased to tlog.BundleRateLimiter, next to the RekorRateLimiter alias in
+// attest.go, so consumers find both knobs in one place. Set to nil to disable.
+var BundleRateLimiter = tlog.BundleRateLimiter
+
+// bundleSignRetries counts signing attempts that failed and were retried.
+// Left unregistered so only hosts that opt in via RegisterMetrics gather it.
+var bundleSignRetries = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "secant_bundle_sign_retries_total",
+	Help: "Number of bundle signing attempts retried after a failure.",
+})
+
+const bundleSignMaxAttempts = 5
+
+// Exposed as a var so tests can shrink the delay.
+var bundleSignInitialBackoff = 500 * time.Millisecond
+
+// signData is cbundle.SignData, indirected so tests can inject failures.
+var signData = cbundle.SignData
 
 // BundleSigner holds the materials needed for the cosign v3 bundle signing path.
 // The ephemeral keypair is generated once and reused across all operations.
@@ -111,7 +134,7 @@ func (bs *BundleSigner) signWithIDToken(ctx context.Context, content sign.Conten
 		return nil, fmt.Errorf("retrieving ID token: %w", err)
 	}
 
-	bundleBytes, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundleBytes, err := signData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
@@ -157,11 +180,43 @@ func (bs *BundleSigner) certNeedsRefresh() bool {
 }
 
 // SignContent creates a protobuf bundle by signing the given content.
+// Each attempt first takes a token from BundleRateLimiter (if non-nil), and
+// failed attempts are retried with exponential backoff, up to
+// bundleSignMaxAttempts total. Errors are not classified: the signing chain
+// (Fulcio, TSA, Rekor) surfaces wrapped, untyped errors, so everything except
+// context cancellation is treated as transient. Attempts are bounded, so
+// misclassifying a terminal error costs at most a few extra round trips.
+func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
+	backoff := bundleSignInitialBackoff
+	for attempt := 1; ; attempt++ {
+		if BundleRateLimiter != nil {
+			if err := BundleRateLimiter.Wait(ctx); err != nil {
+				return nil, fmt.Errorf("waiting for bundle rate limiter: %w", err)
+			}
+		}
+		bundleBytes, err := bs.signContentOnce(ctx, content)
+		if err == nil {
+			return bundleBytes, nil
+		}
+		if ctx.Err() != nil || attempt == bundleSignMaxAttempts {
+			return nil, err
+		}
+		bundleSignRetries.Inc()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+}
+
+// signContentOnce performs a single signing attempt.
 // On first call (or when the cached cert is nearing expiry), delegates to
 // cbundle.SignData with an OIDC token, which fetches a new Fulcio cert
 // internally. The cert is extracted from the bundle and cached so that
 // subsequent calls pass it directly, skipping Fulcio entirely.
-func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
+func (bs *BundleSigner) signContentOnce(ctx context.Context, content sign.Content) ([]byte, error) {
 	// Lock scope is deliberately split: we hold the mutex across a cert
 	// refresh so concurrent callers coalesce onto a single Fulcio fetch,
 	// but release it before the steady-state sign so cached-cert signs
@@ -185,7 +240,7 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 	// Steady state: sign with the cached cert, skipping Fulcio. Safe to
 	// run unlocked because certPEM is a local copy and the keypair /
 	// signingConfig / trustedMaterial fields are immutable after init.
-	bundle, err := cbundle.SignData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundle, err := signData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}

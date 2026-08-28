@@ -11,11 +11,66 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
+	"golang.org/x/time/rate"
 )
 
 func TestRegisterMetrics(t *testing.T) {
-	if err := RegisterMetrics(prometheus.NewRegistry()); err != nil {
+	reg := prometheus.NewRegistry()
+	if err := RegisterMetrics(reg); err != nil {
 		t.Fatalf("RegisterMetrics: %v", err)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gathering: %v", err)
+	}
+	got := make(map[string]bool, len(mfs))
+	for _, mf := range mfs {
+		got[mf.GetName()] = true
+	}
+	for _, want := range []string{
+		"secant_rekor_rate_limiter_wait_duration_seconds",
+		"secant_bundle_rate_limiter_wait_duration_seconds",
+	} {
+		if !got[want] {
+			t.Errorf("metric %q not registered", want)
+		}
+	}
+}
+
+func TestRateLimiterObservesWaits(t *testing.T) {
+	h := prometheus.NewHistogram(prometheus.HistogramOpts{Name: "test_rate_limiter_wait_seconds"})
+	rl := &RateLimiter{limiter: rate.NewLimiter(rate.Inf, 1), waitSeconds: h}
+	if err := rl.Wait(t.Context()); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if err := rl.WaitN(t.Context(), 1); err != nil {
+		t.Fatalf("WaitN: %v", err)
+	}
+	var m dto.Metric
+	if err := h.Write(&m); err != nil {
+		t.Fatalf("writing metric: %v", err)
+	}
+	if got := m.GetHistogram().GetSampleCount(); got != 2 {
+		t.Errorf("recorded %d observations, want 2", got)
+	}
+}
+
+func TestRateLimiterNilHistogram(t *testing.T) {
+	rl := &RateLimiter{limiter: rate.NewLimiter(rate.Inf, 1)}
+	if err := rl.Wait(t.Context()); err != nil {
+		t.Fatalf("Wait with nil histogram: %v", err)
+	}
+}
+
+func TestRateLimiterSetLimitSetBurst(t *testing.T) {
+	rl := &RateLimiter{limiter: rate.NewLimiter(1, 1)}
+	rl.SetLimit(10)
+	rl.SetBurst(20)
+	if got := rl.limiter.Limit(); got != 10 {
+		t.Errorf("Limit() = %v, want 10", got)
+	}
+	if got := rl.limiter.Burst(); got != 20 {
+		t.Errorf("Burst() = %v, want 20", got)
 	}
 }
 

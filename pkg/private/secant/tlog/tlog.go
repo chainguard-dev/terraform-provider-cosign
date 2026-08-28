@@ -32,39 +32,70 @@ import (
 // RekorRateLimiter throttles all calls to Rekor (including retries from
 // createLogEntryWithRetry) to stay within rate limits. Defaults to 5 QPS with
 // a burst of 50.
-var RekorRateLimiter = &RateLimiter{limiter: rate.NewLimiter(5.0, 50)}
+var RekorRateLimiter = &RateLimiter{limiter: rate.NewLimiter(5.0, 50), waitSeconds: rekorWaitSeconds}
 
-// rekorWaitSeconds is left unregistered so only hosts that opt in via
-// RegisterMetrics gather it.
-var rekorWaitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
-	Name:    "secant_rekor_rate_limiter_wait_duration_seconds",
-	Help:    "Seconds spent blocked acquiring tokens from the Rekor rate limiter.",
-	Buckets: prometheus.ExponentialBuckets(0.001, 3, 12),
-})
+// BundleRateLimiter throttles bundle signing attempts (the Fulcio/Rekor v2/TSA
+// chain behind BundleSigner.SignContent), including retries. It is a separate
+// instance from RekorRateLimiter because the bundle path writes to a different
+// backend (Rekor v2): sharing one budget would let either path starve the
+// other, and dual-writing hosts would pay double tokens per image. Defaults
+// mirror RekorRateLimiter; use SetLimit/SetBurst to tune.
+var BundleRateLimiter = &RateLimiter{limiter: rate.NewLimiter(5.0, 50), waitSeconds: bundleWaitSeconds}
+
+// rekorWaitSeconds and bundleWaitSeconds are left unregistered so only hosts
+// that opt in via RegisterMetrics gather them.
+var (
+	rekorWaitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "secant_rekor_rate_limiter_wait_duration_seconds",
+		Help:    "Seconds spent blocked acquiring tokens from the Rekor rate limiter.",
+		Buckets: prometheus.ExponentialBuckets(0.001, 3, 12),
+	})
+	bundleWaitSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "secant_bundle_rate_limiter_wait_duration_seconds",
+		Help:    "Seconds spent blocked acquiring tokens from the bundle signing rate limiter.",
+		Buckets: prometheus.ExponentialBuckets(0.001, 3, 12),
+	})
+)
 
 // RegisterMetrics registers the tlog collectors with r. Hosts that scrape
 // metrics call this once; the Terraform provider never does.
 func RegisterMetrics(r prometheus.Registerer) error {
-	return r.Register(rekorWaitSeconds)
+	for _, c := range []prometheus.Collector{rekorWaitSeconds, bundleWaitSeconds} {
+		if err := r.Register(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RateLimiter throttles acquires and records how long each one blocks.
 type RateLimiter struct {
-	limiter *rate.Limiter
+	limiter     *rate.Limiter
+	waitSeconds prometheus.Histogram // nil means waits go unobserved
 }
 
 func (r *RateLimiter) Wait(ctx context.Context) error {
-	start := time.Now()
-	err := r.limiter.Wait(ctx)
-	rekorWaitSeconds.Observe(time.Since(start).Seconds())
-	return err
+	return r.WaitN(ctx, 1)
 }
 
 func (r *RateLimiter) WaitN(ctx context.Context, n int) error {
 	start := time.Now()
 	err := r.limiter.WaitN(ctx, n)
-	rekorWaitSeconds.Observe(time.Since(start).Seconds())
+	if r.waitSeconds != nil {
+		r.waitSeconds.Observe(time.Since(start).Seconds())
+	}
 	return err
+}
+
+// SetLimit updates the sustained rate to qps tokens per second, so hosts can
+// tune a limiter without reconstructing it.
+func (r *RateLimiter) SetLimit(qps float64) {
+	r.limiter.SetLimit(rate.Limit(qps))
+}
+
+// SetBurst updates the burst size.
+func (r *RateLimiter) SetBurst(n int) {
+	r.limiter.SetBurst(n)
 }
 
 const createLogEntryMaxAttempts = 5
