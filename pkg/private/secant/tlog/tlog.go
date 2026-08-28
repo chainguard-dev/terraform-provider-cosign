@@ -73,10 +73,10 @@ const createLogEntryMaxAttempts = 5
 var createLogEntryInitialBackoff = 500 * time.Millisecond
 
 func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEntry) (*models.LogEntryAnon, error) {
-	params := entries.NewCreateLogEntryParamsWithContext(ctx)
+	params := entries.NewCreateLogEntryParams()
 	params.SetProposedEntry(pe)
 	resp, err := createLogEntryWithRetry(ctx, func() (*entries.CreateLogEntryCreated, error) {
-		return rekorClient.Entries.CreateLogEntry(params)
+		return rekorClient.Entries.CreateLogEntryContext(ctx, params)
 	})
 	if err != nil {
 		// If the entry already exists, we get a specific error.
@@ -179,9 +179,9 @@ func isRetryableRekorError(err error) bool {
 }
 
 func getTlogEntry(ctx context.Context, rekorClient *client.Rekor, entryUUID string) (*models.LogEntryAnon, error) {
-	params := entries.NewGetLogEntryByUUIDParamsWithContext(ctx)
+	params := entries.NewGetLogEntryByUUIDParams()
 	params.SetEntryUUID(entryUUID)
-	resp, err := rekorClient.Entries.GetLogEntryByUUID(params)
+	resp, err := rekorClient.Entries.GetLogEntryByUUIDContext(ctx, params)
 	if err != nil {
 		return nil, err
 	}
