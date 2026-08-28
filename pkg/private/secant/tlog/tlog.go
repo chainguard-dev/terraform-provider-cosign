@@ -58,7 +58,9 @@ var (
 )
 
 // RegisterMetrics registers the tlog collectors with r. Hosts that scrape
-// metrics call this once; the Terraform provider never does.
+// metrics should call the parent secant package's RegisterMetrics instead,
+// which includes these collectors along with secant's own; the Terraform
+// provider calls neither.
 func RegisterMetrics(r prometheus.Registerer) error {
 	for _, c := range []prometheus.Collector{rekorWaitSeconds, bundleWaitSeconds} {
 		if err := r.Register(c); err != nil {

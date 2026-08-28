@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
@@ -158,12 +159,16 @@ func (f *fakeOIDCProvider) Provide(context.Context, string) (string, error) {
 	return "fake-token", nil
 }
 
-// stubSignData replaces the signData seam for the duration of the test.
-func stubSignData(t *testing.T, fn func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error)) {
-	t.Helper()
-	prev := signData
-	signData = fn
-	t.Cleanup(func() { signData = prev })
+// newStubbedSigner returns a BundleSigner whose SignData calls are served by
+// fn, keyed only on the content being signed, so tests can drive the retry
+// loop without network access.
+func newStubbedSigner(oidc fulcio.OIDCProvider, fn func(content sign.Content) ([]byte, error)) *BundleSigner {
+	return &BundleSigner{
+		oidc: oidc,
+		signData: func(_ context.Context, content sign.Content, _ sign.Keypair, _ string, _, _ []byte, _ *root.SigningConfig, _ root.TrustedMaterial, _ cbundle.SignOptions) ([]byte, error) {
+			return fn(content)
+		},
+	}
 }
 
 func setBundleBackoff(t *testing.T, d time.Duration) {
@@ -217,15 +222,13 @@ func TestSignContentRetriesTransient(t *testing.T) {
 
 	transient := errors.New("stream error: INTERNAL_ERROR")
 	var attempts atomic.Int32
-	stubSignData(t, func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error) {
+	provider := &fakeOIDCProvider{}
+	bs := newStubbedSigner(provider, func(sign.Content) ([]byte, error) {
 		if attempts.Add(1) < 3 {
 			return nil, transient
 		}
 		return bundleJSON, nil
 	})
-
-	provider := &fakeOIDCProvider{}
-	bs := &BundleSigner{oidc: provider}
 
 	got, err := bs.SignContent(t.Context(), &sign.DSSEData{Data: []byte("payload")})
 	if err != nil {
@@ -263,12 +266,10 @@ func TestSignContentExhaustsAttempts(t *testing.T) {
 
 	persistent := errors.New("persistent failure")
 	var attempts atomic.Int32
-	stubSignData(t, func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error) {
+	bs := newStubbedSigner(&fakeOIDCProvider{}, func(sign.Content) ([]byte, error) {
 		attempts.Add(1)
 		return nil, persistent
 	})
-
-	bs := &BundleSigner{oidc: &fakeOIDCProvider{}}
 	_, err := bs.SignContent(t.Context(), &sign.DSSEData{Data: []byte("payload")})
 	if !errors.Is(err, persistent) {
 		t.Fatalf("err = %v, want %v", err, persistent)
@@ -279,21 +280,21 @@ func TestSignContentExhaustsAttempts(t *testing.T) {
 }
 
 func TestSignContentAbortsOnContextCancel(t *testing.T) {
-	// An hour of backoff fails the test by timeout if cancellation doesn't
-	// abort the retry loop.
+	// Covers cancellation detected right after a failed attempt: the loop
+	// must return without sleeping or retrying. Cancellation arriving
+	// mid-sleep is covered by TestSignContentCancelDuringBackoff.
 	setBundleBackoff(t, time.Hour)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	var attempts atomic.Int32
-	stubSignData(t, func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error) {
+	bs := newStubbedSigner(&fakeOIDCProvider{}, func(sign.Content) ([]byte, error) {
 		attempts.Add(1)
 		cancel()
 		return nil, errors.New("boom")
 	})
 
-	bs := &BundleSigner{oidc: &fakeOIDCProvider{}}
 	if _, err := bs.SignContent(ctx, &sign.DSSEData{Data: []byte("payload")}); err == nil {
 		t.Fatal("expected error")
 	}
@@ -302,17 +303,57 @@ func TestSignContentAbortsOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestSignContentCancelDuringBackoff(t *testing.T) {
+	// An hour of backoff plus the bounded wait below fails fast if
+	// cancellation can't interrupt the sleep between attempts.
+	setBundleBackoff(t, time.Hour)
+
+	firstFailure := make(chan struct{})
+	var once sync.Once
+	var attempts atomic.Int32
+	bs := newStubbedSigner(&fakeOIDCProvider{}, func(sign.Content) ([]byte, error) {
+		attempts.Add(1)
+		once.Do(func() { close(firstFailure) })
+		return nil, errors.New("boom")
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := bs.SignContent(ctx, &sign.DSSEData{Data: []byte("payload")})
+		done <- err
+	}()
+
+	<-firstFailure
+	// Give the goroutine time to get past the post-attempt ctx check and
+	// into the backoff sleep before cancelling.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled from the backoff sleep", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SignContent did not return after cancellation; backoff sleep is not context-aware")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("attempts = %d, want 1", got)
+	}
+}
+
 func TestSignContentRateLimiterGatesFirstAttempt(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	var attempts atomic.Int32
-	stubSignData(t, func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error) {
+	bs := newStubbedSigner(&fakeOIDCProvider{}, func(sign.Content) ([]byte, error) {
 		attempts.Add(1)
 		return nil, errors.New("boom")
 	})
-
-	bs := &BundleSigner{oidc: &fakeOIDCProvider{}}
 	_, err := bs.SignContent(ctx, &sign.DSSEData{Data: []byte("payload")})
 	if err == nil || !strings.Contains(err.Error(), "waiting for bundle rate limiter") {
 		t.Fatalf("err = %v, want bundle rate limiter wait failure", err)
@@ -331,55 +372,75 @@ func TestSignContentNilRateLimiter(t *testing.T) {
 	derBlock, _ := pem.Decode(certPEM)
 	bundleJSON := buildTestBundleJSONCertificate(t, derBlock.Bytes)
 
-	stubSignData(t, func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error) {
+	bs := newStubbedSigner(&fakeOIDCProvider{}, func(sign.Content) ([]byte, error) {
 		return bundleJSON, nil
 	})
-
-	bs := &BundleSigner{oidc: &fakeOIDCProvider{}}
 	if _, err := bs.SignContent(t.Context(), &sign.DSSEData{Data: []byte("payload")}); err != nil {
 		t.Fatalf("SignContent with nil rate limiter: %v", err)
 	}
 }
 
-func TestSignContentBackoffDoesNotBlockConcurrentSigns(t *testing.T) {
-	setBundleBackoff(t, 50*time.Millisecond)
+func TestSignContentBackoffDoesNotHoldMutex(t *testing.T) {
+	// Long enough that the retrying call sleeps for the whole probe phase;
+	// the cleanup cancels it rather than waiting the backoff out.
+	setBundleBackoff(t, time.Minute)
 
 	certPEM, cert := generateTestCert(t, 10*time.Minute)
 	derBlock, _ := pem.Decode(certPEM)
 	bundleJSON := buildTestBundleJSONCertificate(t, derBlock.Bytes)
 
-	// Seed the cert cache so both calls take the steady-state path.
-	bs := &BundleSigner{oidc: &fakeOIDCProvider{}, cert: cert, certPEM: certPEM}
-
 	failing := []byte("failing payload")
 	firstFailure := make(chan struct{})
 	var once sync.Once
-	stubSignData(t, func(_ context.Context, content sign.Content, _ sign.Keypair, _ string, _, _ []byte, _ *root.SigningConfig, _ root.TrustedMaterial, _ cbundle.SignOptions) ([]byte, error) {
+	bs := newStubbedSigner(&fakeOIDCProvider{}, func(content sign.Content) ([]byte, error) {
 		if dsse, ok := content.(*sign.DSSEData); ok && bytes.Equal(dsse.Data, failing) {
 			once.Do(func() { close(firstFailure) })
 			return nil, errors.New("boom")
 		}
 		return bundleJSON, nil
 	})
+	// Seed the cert cache so both calls take the steady-state path.
+	bs.cert = cert
+	bs.certPEM = certPEM
 
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		_, err := bs.SignContent(t.Context(), &sign.DSSEData{Data: failing})
+		_, err := bs.SignContent(ctx, &sign.DSSEData{Data: failing})
 		done <- err
 	}()
+	// Join the retrying goroutine on every exit path, including t.Fatal,
+	// before earlier-registered cleanups restore shared test state.
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err == nil {
+			t.Error("expected the failing call to return an error")
+		}
+	})
 
-	// While the failing call backs off between attempts, a healthy sign on
-	// the cached-cert path must proceed rather than queue behind it.
 	<-firstFailure
+	// While the failing call sleeps between attempts, the signer mutex must
+	// stay free. Probe repeatedly so a lock held for even part of the
+	// backoff window is caught, not just one held across the whole loop.
+	for range 10 {
+		acquired := false
+		for start := time.Now(); time.Since(start) < 100*time.Millisecond; {
+			if bs.mu.TryLock() {
+				bs.mu.Unlock()
+				acquired = true
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if !acquired {
+			t.Fatal("signer mutex unavailable during backoff; the retry loop appears to hold it while sleeping")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// A healthy sign on the cached-cert path must also complete while the
+	// other call is still backing off.
 	if _, err := bs.SignContent(t.Context(), &sign.DSSEData{Data: []byte("healthy payload")}); err != nil {
 		t.Fatalf("concurrent SignContent: %v", err)
-	}
-	select {
-	case <-done:
-		t.Error("retrying call finished before the concurrent sign; backoff appears to serialize signs")
-	default:
-	}
-	if err := <-done; err == nil {
-		t.Error("expected the failing call to return an error")
 	}
 }

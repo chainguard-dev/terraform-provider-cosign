@@ -53,9 +53,6 @@ const bundleSignMaxAttempts = 5
 // Exposed as a var so tests can shrink the delay.
 var bundleSignInitialBackoff = 500 * time.Millisecond
 
-// signData is cbundle.SignData, indirected so tests can inject failures.
-var signData = cbundle.SignData
-
 // BundleSigner holds the materials needed for the cosign v3 bundle signing path.
 // The ephemeral keypair is generated once and reused across all operations.
 // Fulcio certificates are cached and refreshed when nearing expiry.
@@ -64,6 +61,10 @@ type BundleSigner struct {
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
 	keypair         sign.Keypair
+
+	// signData is cbundle.SignData in production; a field so tests can
+	// inject signing outcomes without network access.
+	signData func(context.Context, sign.Content, sign.Keypair, string, []byte, []byte, *root.SigningConfig, root.TrustedMaterial, cbundle.SignOptions) ([]byte, error)
 
 	mu      sync.Mutex
 	certPEM []byte            // Cached PEM-encoded Fulcio certificate
@@ -121,6 +122,7 @@ func NewBundleSigner(oidc fulcio.OIDCProvider, opts ...BundleSignerOption) (*Bun
 		signingConfig:   cfg.signingConfig,
 		trustedMaterial: cfg.trustedMaterial,
 		keypair:         keypair,
+		signData:        cbundle.SignData,
 	}, nil
 }
 
@@ -134,7 +136,7 @@ func (bs *BundleSigner) signWithIDToken(ctx context.Context, content sign.Conten
 		return nil, fmt.Errorf("retrieving ID token: %w", err)
 	}
 
-	bundleBytes, err := signData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundleBytes, err := bs.signData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
@@ -186,6 +188,9 @@ func (bs *BundleSigner) certNeedsRefresh() bool {
 // (Fulcio, TSA, Rekor) surfaces wrapped, untyped errors, so everything except
 // context cancellation is treated as transient. Attempts are bounded, so
 // misclassifying a terminal error costs at most a few extra round trips.
+// A failed attempt caches nothing, so retries on the cert-refresh path repeat
+// the OIDC and Fulcio round trips; refreshes are rare relative to the cert
+// lifetime and attempts are bounded, so that amplification is accepted.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
 	backoff := bundleSignInitialBackoff
 	for attempt := 1; ; attempt++ {
@@ -240,7 +245,7 @@ func (bs *BundleSigner) signContentOnce(ctx context.Context, content sign.Conten
 	// Steady state: sign with the cached cert, skipping Fulcio. Safe to
 	// run unlocked because certPEM is a local copy and the keypair /
 	// signingConfig / trustedMaterial fields are immutable after init.
-	bundle, err := signData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundle, err := bs.signData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
