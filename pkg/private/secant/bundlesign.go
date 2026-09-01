@@ -164,6 +164,16 @@ func (bs *BundleSigner) certNeedsRefresh() bool {
 // internally. The cert is extracted from the bundle and cached so that
 // subsequent calls pass it directly, skipping Fulcio entirely.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
+	// Every SignContent ends in one transparency-log upload, and the
+	// Rekor v2 write client does not retry a 429 — gate it through the
+	// same limiter as the legacy paths. Wait before taking the mutex so
+	// a throttled caller doesn't block concurrent cached-cert signs.
+	if RekorRateLimiter != nil {
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
+		}
+	}
+
 	// Lock scope is deliberately split: we hold the mutex across a cert
 	// refresh so concurrent callers coalesce onto a single Fulcio fetch,
 	// but release it before the steady-state sign so cached-cert signs
@@ -222,12 +232,7 @@ func signBundle(ctx context.Context, conflict string, annotations map[string]any
 		}
 
 		if err := walk.SignedEntity(ctx, se, func(ctx context.Context, se oci.SignedEntity) error {
-			// Get the digest for this entity in our walk.
-			digestable, ok := se.(interface{ Digest() (v1.Hash, error) })
-			if !ok {
-				return fmt.Errorf("entity does not implement Digest() method")
-			}
-			d, err := digestable.Digest()
+			d, err := se.Digest()
 			if err != nil {
 				return fmt.Errorf("computing digest: %w", err)
 			}

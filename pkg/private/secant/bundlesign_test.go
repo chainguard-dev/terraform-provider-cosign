@@ -161,9 +161,7 @@ func (f *fakeContentSigner) SignContent(_ context.Context, content sign.Content)
 
 // TestSignBundleWalksIndexChildren mirrors TestSign for the bundle path: the
 // walk must attach a sign-predicate bundle to the index and to each child
-// manifest, each bundle's statement naming that entity as its subject. Before
-// the walk, only the index was signed, leaving arch-pinned digests of a
-// bundle-only image unverifiable (CON-2628).
+// manifest, each bundle's statement naming that entity as its subject.
 func TestSignBundleWalksIndexChildren(t *testing.T) {
 	ctx := context.Background()
 
@@ -232,6 +230,22 @@ func TestSignBundleWalksIndexChildren(t *testing.T) {
 			for _, d := range digests {
 				if got := len(signBundleStatements(t, d)); got != 1 {
 					t.Errorf("got %d sign bundles for %s after re-run, want 1", got, d)
+				}
+			}
+
+			// A REPLACE run re-signs every walked entity — pinning that the
+			// caller's conflict mode reaches the per-digest path — and still
+			// converges on one bundle per digest.
+			signer.calls = 0
+			if err := signBundle(ctx, Replace, nil, signer, digests[:1], nil); err != nil {
+				t.Fatalf("signBundle() REPLACE = %v", err)
+			}
+			if signer.calls != len(digests) {
+				t.Errorf("REPLACE run performed %d sign operations, want %d", signer.calls, len(digests))
+			}
+			for _, d := range digests {
+				if got := len(signBundleStatements(t, d)); got != 1 {
+					t.Errorf("got %d sign bundles for %s after REPLACE, want 1", got, d)
 				}
 			}
 		})
