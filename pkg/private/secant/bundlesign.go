@@ -24,7 +24,9 @@ import (
 	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
 	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
+	"github.com/sigstore/cosign/v3/pkg/oci"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
+	"github.com/sigstore/cosign/v3/pkg/oci/walk"
 	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -162,6 +164,16 @@ func (bs *BundleSigner) certNeedsRefresh() bool {
 // internally. The cert is extracted from the bundle and cached so that
 // subsequent calls pass it directly, skipping Fulcio entirely.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
+	// Every SignContent ends in one transparency-log upload, and the
+	// Rekor v2 write client does not retry a 429 — gate it through the
+	// same limiter as the legacy paths. Wait before taking the mutex so
+	// a throttled caller doesn't block concurrent cached-cert signs.
+	if RekorRateLimiter != nil {
+		if err := RekorRateLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
+		}
+	}
+
 	// Lock scope is deliberately split: we hold the mutex across a cert
 	// refresh so concurrent callers coalesce onto a single Fulcio fetch,
 	// but release it before the steady-state sign so cached-cert signs
@@ -192,62 +204,96 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 	return bundle, nil
 }
 
+// contentSigner is the part of BundleSigner that SignBundle consumes — the
+// seam that lets tests drive the walk and write fan-out without Fulcio.
+type contentSigner interface {
+	SignContent(ctx context.Context, content sign.Content) ([]byte, error)
+}
+
 // SignBundle signs container images using the cosign v3 bundle format
-// and writes them as OCI referrers. conflict matches the semantics of Sign:
-// APPEND (or empty) always writes, SKIPSAME skips when an existing referrer
-// has an identical payload, REPLACE deletes existing referrers with matching
-// predicate type before writing.
+// and writes them as OCI referrers. Like the legacy Sign, it signs each
+// image and its constituent manifests transitively: an image index and every
+// child manifest each get their own sign-predicate bundle referrer, so
+// arch-pinned digests verify the same as the index. conflict matches the
+// semantics of Sign: APPEND (or empty) always writes, SKIPSAME skips when an
+// existing referrer has an identical payload, REPLACE deletes existing
+// referrers with matching predicate type before writing.
 func SignBundle(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, imgs []name.Digest, ropt []remote.Option) error {
+	return signBundle(ctx, conflict, annotations, signer, imgs, ropt)
+}
+
+func signBundle(ctx context.Context, conflict string, annotations map[string]any, signer contentSigner, imgs []name.Digest, ropt []remote.Option) error {
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
-	for _, digest := range imgs {
-		digestParts := strings.Split(digest.DigestStr(), ":")
-		if len(digestParts) != 2 {
-			return fmt.Errorf("unable to parse digest %s", digest.DigestStr())
-		}
-
-		annoStruct, err := structpb.NewStruct(annotations)
+	for _, ref := range imgs {
+		se, err := ociremote.SignedEntity(ref, opts...)
 		if err != nil {
-			return fmt.Errorf("converting annotations to protobuf struct: %w", err)
-		}
-		subject := intotov1.ResourceDescriptor{
-			Digest:      map[string]string{digestParts[0]: digestParts[1]},
-			Annotations: annoStruct,
+			return fmt.Errorf("accessing entity: %w", err)
 		}
 
-		statement := &intotov1.Statement{
-			Type:          intotov1.StatementTypeUri,
-			Subject:       []*intotov1.ResourceDescriptor{&subject},
-			PredicateType: ctypes.CosignSignPredicateType,
-			Predicate:     &structpb.Struct{},
+		if err := walk.SignedEntity(ctx, se, func(ctx context.Context, se oci.SignedEntity) error {
+			d, err := se.Digest()
+			if err != nil {
+				return fmt.Errorf("computing digest: %w", err)
+			}
+			return signBundleDigest(ctx, conflict, annotations, signer, ref.Context().Digest(d.String()), ropt, opts)
+		}); err != nil {
+			return fmt.Errorf("recursively signing: %w", err)
 		}
+	}
 
-		payload, err := protojson.Marshal(statement)
-		if err != nil {
-			return fmt.Errorf("marshaling statement: %w", err)
-		}
+	return nil
+}
 
-		shouldWrite, err := resolveBundleConflict(digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
-		if err != nil {
-			return fmt.Errorf("resolving conflict for %q: %w", digest.String(), err)
-		}
-		if !shouldWrite {
-			continue
-		}
+// signBundleDigest signs exactly one digest with a sign-predicate bundle,
+// applying the conflict policy against its existing referrers.
+func signBundleDigest(ctx context.Context, conflict string, annotations map[string]any, signer contentSigner, digest name.Digest, ropt []remote.Option, opts []ociremote.Option) error {
+	digestParts := strings.Split(digest.DigestStr(), ":")
+	if len(digestParts) != 2 {
+		return fmt.Errorf("unable to parse digest %s", digest.DigestStr())
+	}
 
-		content := &sign.DSSEData{
-			Data:        payload,
-			PayloadType: ctypes.IntotoPayloadType,
-		}
+	annoStruct, err := structpb.NewStruct(annotations)
+	if err != nil {
+		return fmt.Errorf("converting annotations to protobuf struct: %w", err)
+	}
+	subject := intotov1.ResourceDescriptor{
+		Digest:      map[string]string{digestParts[0]: digestParts[1]},
+		Annotations: annoStruct,
+	}
 
-		bundleBytes, err := signer.SignContent(ctx, content)
-		if err != nil {
-			return fmt.Errorf("signing bundle for %q: %w", digest.String(), err)
-		}
+	statement := &intotov1.Statement{
+		Type:          intotov1.StatementTypeUri,
+		Subject:       []*intotov1.ResourceDescriptor{&subject},
+		PredicateType: ctypes.CosignSignPredicateType,
+		Predicate:     &structpb.Struct{},
+	}
 
-		if err := writeBundleReferrer(digest, bundleBytes, ctypes.CosignSignPredicateType, nil, ropt); err != nil {
-			return fmt.Errorf("writing sign bundle for %q: %w", digest.String(), err)
-		}
+	payload, err := protojson.Marshal(statement)
+	if err != nil {
+		return fmt.Errorf("marshaling statement: %w", err)
+	}
+
+	shouldWrite, err := resolveBundleConflict(digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
+	if err != nil {
+		return fmt.Errorf("resolving conflict for %q: %w", digest.String(), err)
+	}
+	if !shouldWrite {
+		return nil
+	}
+
+	content := &sign.DSSEData{
+		Data:        payload,
+		PayloadType: ctypes.IntotoPayloadType,
+	}
+
+	bundleBytes, err := signer.SignContent(ctx, content)
+	if err != nil {
+		return fmt.Errorf("signing bundle for %q: %w", digest.String(), err)
+	}
+
+	if err := writeBundleReferrer(digest, bundleBytes, ctypes.CosignSignPredicateType, nil, ropt); err != nil {
+		return fmt.Errorf("writing sign bundle for %q: %w", digest.String(), err)
 	}
 
 	return nil
