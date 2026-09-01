@@ -1,18 +1,26 @@
 package secant
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	intotov1 "github.com/in-toto/attestation/go/v1"
+	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
+	"github.com/sigstore/sigstore-go/pkg/sign"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -133,4 +141,119 @@ func buildTestBundleJSONCertificate(t *testing.T, certDER []byte) []byte {
 		t.Fatalf("marshaling test bundle: %v", err)
 	}
 	return data
+}
+
+// fakeContentSigner stands in for BundleSigner: it wraps each DSSE payload it
+// is asked to sign in a minimal bundle and counts invocations.
+type fakeContentSigner struct {
+	t     *testing.T
+	calls int
+}
+
+func (f *fakeContentSigner) SignContent(_ context.Context, content sign.Content) ([]byte, error) {
+	f.calls++
+	dsse, ok := content.(*sign.DSSEData)
+	if !ok {
+		f.t.Fatalf("SignContent() got content type %T, want *sign.DSSEData", content)
+	}
+	return bundleWithDSSEPayload(f.t, dsse.Data), nil
+}
+
+// TestSignBundleWalksIndexChildren mirrors TestSign for the bundle path: the
+// walk must attach a sign-predicate bundle to the index and to each child
+// manifest, each bundle's statement naming that entity as its subject. Before
+// the walk, only the index was signed, leaving arch-pinned digests of a
+// bundle-only image unverifiable (CON-2628).
+func TestSignBundleWalksIndexChildren(t *testing.T) {
+	ctx := context.Background()
+
+	for _, referrersSupport := range []bool{true, false} {
+		t.Run(fmt.Sprintf("referrersSupport=%t", referrersSupport), func(t *testing.T) {
+			repo := newTestRepo(t, referrersSupport)
+
+			idx, err := random.Index(1024, 1, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := remote.WriteIndex(repo.Tag("latest"), idx); err != nil {
+				t.Fatal(err)
+			}
+
+			im, err := idx.IndexManifest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			h, err := idx.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			digests := []name.Digest{repo.Digest(h.String())}
+			for _, m := range im.Manifests {
+				digests = append(digests, repo.Digest(m.Digest.String()))
+			}
+
+			signer := &fakeContentSigner{t: t}
+			if err := signBundle(ctx, SkipSame, nil, signer, digests[:1], nil); err != nil {
+				t.Fatalf("signBundle() = %v", err)
+			}
+
+			// The walk signs the index and each of its children, and every
+			// bundle's statement names the entity it is attached to.
+			for _, d := range digests {
+				statements := signBundleStatements(t, d)
+				if len(statements) != 1 {
+					t.Errorf("got %d sign bundles for %s, want 1", len(statements), d)
+					continue
+				}
+				statement := &intotov1.Statement{}
+				if err := protojson.Unmarshal(statements[0], statement); err != nil {
+					t.Fatalf("unmarshaling statement for %s: %v", d, err)
+				}
+				if got := len(statement.Subject); got != 1 {
+					t.Fatalf("got %d statement subjects for %s, want 1", got, d)
+				}
+				if got, want := "sha256:"+statement.Subject[0].Digest["sha256"], d.DigestStr(); got != want {
+					t.Errorf("statement subject = %s, want %s", got, want)
+				}
+			}
+			if signer.calls != len(digests) {
+				t.Errorf("got %d sign operations, want %d", signer.calls, len(digests))
+			}
+
+			// A SKIPSAME re-run finds every bundle already in place and signs
+			// nothing.
+			signer.calls = 0
+			if err := signBundle(ctx, SkipSame, nil, signer, digests[:1], nil); err != nil {
+				t.Fatalf("signBundle() re-run = %v", err)
+			}
+			if signer.calls != 0 {
+				t.Errorf("re-run performed %d sign operations, want 0", signer.calls)
+			}
+			for _, d := range digests {
+				if got := len(signBundleStatements(t, d)); got != 1 {
+					t.Errorf("got %d sign bundles for %s after re-run, want 1", got, d)
+				}
+			}
+		})
+	}
+}
+
+// signBundleStatements returns the DSSE statement payload of each
+// sign-predicate bundle referrer attached to d.
+func signBundleStatements(t *testing.T, d name.Digest) [][]byte {
+	t.Helper()
+
+	matching, err := matchingBundleReferrers(d, ctypes.CosignSignPredicateType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads := make([][]byte, 0, len(matching))
+	for _, m := range matching {
+		p, err := referrerDSSEPayload(d.Repository, m.Digest, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloads = append(payloads, p)
+	}
+	return payloads
 }
