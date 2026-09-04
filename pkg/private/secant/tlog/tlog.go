@@ -80,8 +80,7 @@ func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEn
 	})
 	if err != nil {
 		// If the entry already exists, we get a specific error.
-		var existsErr *entries.CreateLogEntryConflict
-		if errors.As(err, &existsErr) {
+		if existsErr, ok := errors.AsType[*entries.CreateLogEntryConflict](err); ok {
 			fmt.Fprintln(os.Stderr, "Signature already exists.")
 			uriSplit := strings.Split(existsErr.Location.String(), "/")
 			uuid := uriSplit[len(uriSplit)-1]
