@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -41,13 +39,7 @@ func setupTestRepo(t *testing.T) name.Repository {
 func newTestRepo(t *testing.T, referrersSupport bool) name.Repository {
 	t.Helper()
 
-	srv := httptest.NewServer(registry.New(registry.WithReferrersSupport(referrersSupport)))
-	t.Cleanup(srv.Close)
-
-	repo, err := name.NewRepository(strings.TrimPrefix(srv.URL, "http://") + "/test-repo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo, _ := newRecordingTestRepo(t, referrersSupport)
 	return repo
 }
 
