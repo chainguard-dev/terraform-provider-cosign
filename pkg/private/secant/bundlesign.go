@@ -18,6 +18,7 @@ import (
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
@@ -204,8 +205,9 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 	return bundle, nil
 }
 
-// contentSigner is the part of BundleSigner that SignBundle consumes — the
-// seam that lets tests drive the walk and write fan-out without Fulcio.
+// contentSigner is the part of BundleSigner that the bundle signing paths
+// consume — the seam that lets tests drive the walk and the per-digest write
+// without Fulcio.
 type contentSigner interface {
 	SignContent(ctx context.Context, content sign.Content) ([]byte, error)
 }
@@ -218,6 +220,10 @@ type contentSigner interface {
 // semantics of Sign: APPEND (or empty) always writes, SKIPSAME skips when an
 // existing referrer has an identical payload, REPLACE deletes existing
 // referrers with matching predicate type before writing.
+//
+// SignBundle fetches each image to walk it, so every digest in imgs must
+// already exist in the registry. Callers that enumerate manifests themselves,
+// or that sign concurrently with a push, use SignBundleDigest.
 func SignBundle(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, imgs []name.Digest, ropt []remote.Option) error {
 	return signBundle(ctx, conflict, annotations, signer, imgs, ropt)
 }
@@ -232,11 +238,18 @@ func signBundle(ctx context.Context, conflict string, annotations map[string]any
 		}
 
 		if err := walk.SignedEntity(ctx, se, func(ctx context.Context, se oci.SignedEntity) error {
-			d, err := se.Digest()
-			if err != nil {
-				return fmt.Errorf("computing digest: %w", err)
+			// The walk yields oci.SignedImage or oci.SignedImageIndex, both
+			// Describable, so the referrer subject comes from what the walk
+			// already fetched rather than a HEAD per entity.
+			describable, ok := se.(partial.Describable)
+			if !ok {
+				return fmt.Errorf("unexpected signed entity type %T", se)
 			}
-			return signBundleDigest(ctx, conflict, annotations, signer, ref.Context().Digest(d.String()), ropt, opts)
+			subjectDesc, err := partial.Descriptor(describable)
+			if err != nil {
+				return fmt.Errorf("describing entity: %w", err)
+			}
+			return signBundleDigest(ctx, conflict, annotations, signer, ref.Context().Digest(subjectDesc.Digest.String()), subjectDesc, ropt, opts)
 		}); err != nil {
 			return fmt.Errorf("recursively signing: %w", err)
 		}
@@ -245,12 +258,25 @@ func signBundle(ctx context.Context, conflict string, annotations map[string]any
 	return nil
 }
 
+// SignBundleDigest signs exactly the given digest with a sign-predicate
+// bundle written as an OCI referrer, without recursing into an index's
+// children. Because the subject manifest is never fetched — the referrer's
+// subject descriptor is synthesized from the digest — the digest does not
+// need to exist in the registry yet. conflict has the same semantics as
+// SignBundle.
+func SignBundleDigest(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, digest name.Digest, ropt []remote.Option) error {
+	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+	return signBundleDigest(ctx, conflict, annotations, signer, digest, nil, ropt, opts)
+}
+
 // signBundleDigest signs exactly one digest with a sign-predicate bundle,
-// applying the conflict policy against its existing referrers.
-func signBundleDigest(ctx context.Context, conflict string, annotations map[string]any, signer contentSigner, digest name.Digest, ropt []remote.Option, opts []ociremote.Option) error {
-	digestParts := strings.Split(digest.DigestStr(), ":")
-	if len(digestParts) != 2 {
-		return fmt.Errorf("unable to parse digest %s", digest.DigestStr())
+// applying the conflict policy against its existing referrers. subjectDesc,
+// when non-nil, is used verbatim as the referrer's subject descriptor; nil
+// synthesizes a digest-only one. Neither reads the subject.
+func signBundleDigest(ctx context.Context, conflict string, annotations map[string]any, signer contentSigner, digest name.Digest, subjectDesc *v1.Descriptor, ropt []remote.Option, opts []ociremote.Option) error {
+	h, err := v1.NewHash(digest.DigestStr())
+	if err != nil {
+		return fmt.Errorf("parsing digest %q: %w", digest.String(), err)
 	}
 
 	annoStruct, err := structpb.NewStruct(annotations)
@@ -258,7 +284,7 @@ func signBundleDigest(ctx context.Context, conflict string, annotations map[stri
 		return fmt.Errorf("converting annotations to protobuf struct: %w", err)
 	}
 	subject := intotov1.ResourceDescriptor{
-		Digest:      map[string]string{digestParts[0]: digestParts[1]},
+		Digest:      map[string]string{h.Algorithm: h.Hex},
 		Annotations: annoStruct,
 	}
 
@@ -292,7 +318,10 @@ func signBundleDigest(ctx context.Context, conflict string, annotations map[stri
 		return fmt.Errorf("signing bundle for %q: %w", digest.String(), err)
 	}
 
-	if err := writeBundleReferrer(digest, bundleBytes, ctypes.CosignSignPredicateType, nil, ropt); err != nil {
+	if subjectDesc == nil {
+		subjectDesc = &v1.Descriptor{Digest: h}
+	}
+	if err := writeBundleReferrer(digest, bundleBytes, ctypes.CosignSignPredicateType, subjectDesc, ropt); err != nil {
 		return fmt.Errorf("writing sign bundle for %q: %w", digest.String(), err)
 	}
 
