@@ -8,8 +8,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -19,13 +21,20 @@ import (
 
 	"github.com/google/certificate-transparency-go/x509util"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
+	"github.com/sigstore/cosign/v3/pkg/cosign/env"
 	"github.com/sigstore/cosign/v3/pkg/oci"
 	"github.com/sigstore/cosign/v3/pkg/oci/static"
 	"github.com/sigstore/fulcio/pkg/api"
+	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/oauthflow"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/sigstore/sigstore/pkg/signature/options"
+	// The deprecated TUF client is used deliberately: it is the client callers
+	// configure via tuf.Initialize (e.g. to point at a custom mirror), and it
+	// is what cosign.GetCTLogPubs reads from, so the trusted_root.json target
+	// must come from the same source.
+	"github.com/sigstore/sigstore/pkg/tuf" //nolint:staticcheck
 	"golang.org/x/oauth2"
 )
 
@@ -117,7 +126,7 @@ func (sv *SignerVerifier) refresh(ctx context.Context) error {
 	}
 
 	// Grab the PublicKeys for the CTFE, either from tuf or env.
-	pubKeys, err := cosign.GetCTLogPubs(ctx)
+	pubKeys, err := getCTLogPubs(ctx)
 	if err != nil {
 		return fmt.Errorf("getting CTFE public keys: %w", err)
 	}
@@ -137,6 +146,68 @@ func (sv *SignerVerifier) refresh(ctx context.Context) error {
 	sv.chain = resp.ChainPEM
 	sv.sct = resp.SCT
 
+	return nil
+}
+
+// getCTLogPubs returns the CT log public keys to verify SCTs against.
+//
+// cosign.GetCTLogPubs reads only the individual ctfe*.pub TUF targets, which
+// sigstore treats as deprecated: keys for newer CT logs can be published only
+// inside the trusted_root.json target (the staging instance's
+// log2026-1.us-east4 log is one, see sigstore/root-signing-staging#434). An
+// SCT issued by such a log fails verification with "ctfe public key not found
+// for payload" if only the legacy targets are loaded, so the CT log keys from
+// trusted_root.json are merged in. Keys are indexed by log ID, so keys
+// present in both sources dedupe.
+func getCTLogPubs(ctx context.Context) (*cosign.TrustedTransparencyLogPubKeys, error) {
+	// An explicit key file overrides TUF entirely; keep cosign's behavior.
+	if env.Getenv(env.VariableSigstoreCTLogPublicKeyFile) != "" {
+		return cosign.GetCTLogPubs(ctx)
+	}
+
+	pubKeys := cosign.NewTrustedTransparencyLogPubKeys()
+
+	legacy, legacyErr := cosign.GetCTLogPubs(ctx)
+	if legacyErr == nil {
+		maps.Copy(pubKeys.Keys, legacy.Keys)
+	}
+
+	trustedRootErr := func() error {
+		tufClient, err := tuf.NewFromEnv(ctx)
+		if err != nil {
+			return err
+		}
+		b, err := tufClient.GetTarget("trusted_root.json")
+		if err != nil {
+			return err
+		}
+		return addTrustedRootCTLogKeys(&pubKeys, b)
+	}()
+
+	// Either source alone can be incomplete or absent (older TUF repos have no
+	// trusted_root.json target), so fail only when both yielded nothing.
+	if len(pubKeys.Keys) == 0 {
+		return nil, errors.Join(errors.New("no CT log public keys found"), legacyErr, trustedRootErr)
+	}
+	return &pubKeys, nil
+}
+
+// addTrustedRootCTLogKeys adds the CT log keys from a serialized
+// trusted_root.json to pubKeys.
+func addTrustedRootCTLogKeys(pubKeys *cosign.TrustedTransparencyLogPubKeys, trustedRootJSON []byte) error {
+	tr, err := root.NewTrustedRootFromJSON(trustedRootJSON)
+	if err != nil {
+		return fmt.Errorf("parsing trusted root: %w", err)
+	}
+	for _, ctlog := range tr.CTLogs() {
+		pem, err := cryptoutils.MarshalPublicKeyToPEM(ctlog.PublicKey)
+		if err != nil {
+			return fmt.Errorf("marshaling CT log key: %w", err)
+		}
+		if err := pubKeys.AddTransparencyLogPubKey(pem, tuf.Active); err != nil {
+			return fmt.Errorf("adding CT log key: %w", err)
+		}
+	}
 	return nil
 }
 
