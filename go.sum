@@ -308,8 +308,8 @@ github.com/go-git/go-billy/v5 v5.8.0 h1:I8hjc3LbBlXTtVuFNJuwYuMiHvQJDq1AT6u4DwDz
 github.com/go-git/go-billy/v5 v5.8.0/go.mod h1:RpvI/rw4Vr5QA+Z60c6d6LXH0rYJo0uD5SqfmrrheCY=
 github.com/go-git/go-git/v5 v5.18.0 h1:O831KI+0PR51hM2kep6T8k+w0/LIAD490gvqMCvL5hM=
 github.com/go-git/go-git/v5 v5.18.0/go.mod h1:pW/VmeqkanRFqR6AljLcs7EA7FbZaN5MQqO7oZADXpo=
-github.com/go-jose/go-jose/v4 v4.1.4 h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=
-github.com/go-jose/go-jose/v4 v4.1.4/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
+github.com/go-jose/go-jose/v4 v4.1.5 h1:RjgjO2LOtWOJKUC5wpwY9LR3B3vwVAz6JS2YHfYU6eA=
+github.com/go-jose/go-jose/v4 v4.1.5/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
@@ -718,8 +718,8 @@ github.com/sigstore/rekor-tiles/v2 v2.3.0 h1:HhMgH61UP0t899V8Fjt7pz1YdgOBptbaQdn
 github.com/sigstore/rekor-tiles/v2 v2.3.0/go.mod h1:DEFiKSyQ4nF75QRVNdOPaIH3cmvMkO2B6xDZjNYngPc=
 github.com/sigstore/scaffolding v0.7.22 h1:VjrRzUVRXWGPboglizvGvgq3U8kXnBS5/s4jDCUVwiU=
 github.com/sigstore/scaffolding v0.7.22/go.mod h1:ojN1gLIjZCl0lhEoqXBvaL+GJbTbBgcNZxxxvK7apuM=
-github.com/sigstore/sigstore v1.10.9 h1:7Dcpt+ibnltHQZ8XhaU0dFmhHaf/T491eJfA9WDex4Y=
-github.com/sigstore/sigstore v1.10.9/go.mod h1:LYW9+qH7bK8wZmLm6lPxIC5lkHtkJDCgkqjChzTAIBs=
+github.com/sigstore/sigstore v1.10.10 h1:0hfpqcl1+UnzxuVT4//PzL3LQ8uOCzoF90Ofs5zzBwM=
+github.com/sigstore/sigstore v1.10.10/go.mod h1:Q8tpy2X80KVswawYR0eTjWl3gM3AU+ak+h/NtPzRfWs=
 github.com/sigstore/sigstore-go v1.3.0 h1:hnIMHREyCNTYFtOE1o7ae3Axa9B5W5EjUSBJICP2NBE=
 github.com/sigstore/sigstore-go v1.3.0/go.mod h1:AyRQXfpH89py1twjE3kEZxlRersng90GSYqQV9zGJE8=
 github.com/sigstore/sigstore/pkg/signature/kms/aws v1.10.9 h1:2NWAU/utJRwzy1OrQurlY3wlDSynyH1rNJS5GgFchrg=
@@ -787,8 +787,8 @@ github.com/tink-crypto/tink-go-gcpkms/v2 v2.4.0 h1:xpI5pnEQ0erFCS3JmcEl7Blluo8Zi
 github.com/tink-crypto/tink-go-gcpkms/v2 v2.4.0/go.mod h1:wDDAhjfd1t4TjeJCSsmFK7CARPUs/ITi16ZZ8kmAaFQ=
 github.com/tink-crypto/tink-go-hcvault/v2 v2.5.0 h1:eXuNqgrcYelxU1MVikOJDP3wTS5lvihM4ntoAbAMfvs=
 github.com/tink-crypto/tink-go-hcvault/v2 v2.5.0/go.mod h1:3RhcxAqek6xUlRFmJifvU4CYLZN60KMQdIKqpZAZJG0=
-github.com/tink-crypto/tink-go/v2 v2.7.0 h1:k7QnUXJ1cRDpvoy/5l1FimZqMAArRff8vjUqzi5N04o=
-github.com/tink-crypto/tink-go/v2 v2.7.0/go.mod h1:cWNpQ/yAT/QHzAV0kBGMOSJzzYTKofDZdJaUqOPPWCI=
+github.com/tink-crypto/tink-go/v2 v2.8.0 h1:1zODq1bZDqOQdNPjhvwGYLDw9On7mDWPnQf+4xXlpAc=
+github.com/tink-crypto/tink-go/v2 v2.8.0/go.mod h1:aNXZeyxjQU9iqAeARRNmbESXUW6Mao1HRCCTY8B1TFM=
 github.com/tjfoc/gmsm v1.3.2/go.mod h1:HaUcFuY0auTiaHB9MHFGCPx5IaLhTUd2atbCFBQXn9w=
 github.com/tjfoc/gmsm v1.4.1 h1:aMe1GlZb+0bLjn+cKTPEvvn9oUEBlJitaZiiBwsbgho=
 github.com/tjfoc/gmsm v1.4.1/go.mod h1:j4INPkHWMrhJb38G+J6W4Tw0AbuN8Thu3PbdVYhVcTE=
