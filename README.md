@@ -68,6 +68,18 @@ resource "cosign_attest" "example" {
 # metadata to be published.
 ```
 
+The provider also exposes a `cosign_copy` resource, which copies a provided
+image digest to another repository (via `cosign copy`):
+
+```hcl
+resource "cosign_copy" "example" {
+  source      = data.cosign_verify.example.verified_ref
+  destination = "cgr.dev/my-org/static"
+}
+
+# cosign_copy.example.copied_ref matches the source digest, for chaining.
+```
+
 ## Disabling
 
 The provider will skip signing/attesting when ambient credentials are not
