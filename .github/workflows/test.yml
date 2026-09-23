@@ -3,6 +3,8 @@ name: Tests
 on:
   # pull_request_target is deliberate: fork PRs need the OIDC token for the
   # keyless signing tests, which plain pull_request does not grant them.
+  # Untrusted fork code is gated behind the reviewer-approved
+  # acceptance-tests environment, see the test job below.
   pull_request_target: # zizmor: ignore[dangerous-triggers]
     branches:
       - "main"
@@ -22,6 +24,13 @@ jobs:
         terraform:
           - "1.14.*"
           - "1.15.*"
+
+    # Fork PRs must wait for reviewer approval on the acceptance-tests
+    # environment before the job runs: it executes the PR's code with an
+    # OIDC token for this repo. PRs from branches in this repo (write access
+    # already) and push events run without approval. A PR whose head repo
+    # was deleted has a null head.repo, so it is gated too.
+    environment: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && 'acceptance-tests' || '' }}
 
     permissions:
       contents: read
@@ -60,7 +69,8 @@ jobs:
         with:
           # checkout v7 refuses a fork PR ref under pull_request_target unless
           # this is set. The job needs the PR's merge commit to test it, and
-          # already limits the blast radius: no workflow-level permissions,
+          # limits the blast radius: fork PRs need acceptance-tests
+          # environment approval, no workflow-level permissions,
           # contents:read plus the id-token:write the keyless signing tests
           # need, no persisted credentials, and harden-runner in block mode.
           allow-unsafe-pr-checkout: true
