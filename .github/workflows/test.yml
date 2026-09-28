@@ -36,9 +36,6 @@ jobs:
       contents: read
       id-token: write
 
-    env:
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -68,13 +65,17 @@ jobs:
         if: "contains(github.event_name, 'pull_request')"
         with:
           # checkout v7 refuses a fork PR ref under pull_request_target unless
-          # this is set. The job needs the PR's merge commit to test it, and
+          # this is set. The job needs the PR's code to test it, and
           # limits the blast radius: fork PRs need acceptance-tests
           # environment approval, no workflow-level permissions,
           # contents:read plus the id-token:write the keyless signing tests
           # need, no persisted credentials, and harden-runner in block mode.
           allow-unsafe-pr-checkout: true
-          ref: refs/pull/${{ env.PR_NUMBER }}/merge
+          # Pin to the head commit of the triggering event, not the mutable
+          # refs/pull/N/merge: otherwise commits pushed after a reviewer
+          # approves the acceptance-tests deployment would run under that
+          # approval (time-of-check/time-of-use).
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: checkout from push event
