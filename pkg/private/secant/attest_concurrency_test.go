@@ -70,7 +70,7 @@ func (f *slowRekorEntries) CreateLogEntryContext(ctx context.Context, params *en
 	// The embedded fake's counter is not guarded; serialize the handoff.
 	f.tracker.mu.Lock()
 	defer f.tracker.mu.Unlock()
-	return f.fakeRekorEntries.CreateLogEntry(params, opts...)
+	return f.CreateLogEntry(params, opts...)
 }
 
 // newStatementsForDigest builds one statement per predicate type for digest,
@@ -221,7 +221,8 @@ func TestAttestBundleSignsPredicateTypesConcurrently(t *testing.T) {
 		stmt.SubjectDescriptor = &v1.Descriptor{Digest: h}
 	}
 
-	signer := &slowContentSigner{fakeContentSigner: fakeContentSigner{t: t}, delay: 200 * time.Millisecond}
+	signer := &slowContentSigner{delay: 200 * time.Millisecond}
+	signer.t = t
 	start := time.Now()
 	if err := attestBundle(ctx, SkipSame, statements, signer, nil); err != nil {
 		t.Fatalf("attestBundle() = %v", err)
