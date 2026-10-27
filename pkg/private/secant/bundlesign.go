@@ -415,19 +415,20 @@ func attestBundleSubject(ctx context.Context, conflict string, statements []*typ
 		if err != nil {
 			return fmt.Errorf("resolving conflict for %q: %w", subject.String(), err)
 		}
-		var deleted []v1.Hash
 		for i, stmt := range statements {
-			shouldWrite, superseded, err := supersedeBundleReferrers(subject, stmt.Payload, conflict, existing[predicateTypes[i]], ropt)
+			shouldWrite, deleted, err := supersedeBundleReferrers(subject, stmt.Payload, conflict, existing[predicateTypes[i]], ropt)
 			if err != nil {
 				return fmt.Errorf("resolving conflict for %q: %w", subject.String(), err)
 			}
 			write[i] = shouldWrite
-			deleted = append(deleted, superseded...)
-		}
-		// Drop the deleted referrers from a fallback-tag index before any
-		// write reads it; see resolveBundleConflict for why.
-		if err := pruneFallbackReferrers(subject, deleted, ropt); err != nil {
-			return fmt.Errorf("pruning fallback referrers for %q: %w", subject.String(), err)
+			// Drop this statement's deletions from a fallback-tag index now
+			// (see resolveBundleConflict for why), not once after the loop:
+			// if a later statement fails to resolve, the index must not be
+			// left pointing at manifests that are already gone, or a retry
+			// would re-commit those dangling entries and be rejected.
+			if err := pruneFallbackReferrers(subject, deleted, ropt); err != nil {
+				return fmt.Errorf("pruning fallback referrers for %q: %w", subject.String(), err)
+			}
 		}
 	default:
 		return fmt.Errorf("unknown conflict mode: %q", conflict)

@@ -428,3 +428,56 @@ func TestAttestBundleRejectsDuplicatePredicateTypes(t *testing.T) {
 	}
 	assertFallbackIndexConsistent(t, digest)
 }
+
+// TestAttestBundleRetryAfterConflictError pins the cleanup contract on the
+// fallback-tag registry when conflict resolution fails partway through a
+// batch: deletions that already completed must be pruned from the shared
+// index before the error is returned. Otherwise the index keeps pointing at
+// manifests that are gone, discovery skips them (so no later run can prune
+// them), and a retry's write re-commits the dangling entries, which a
+// validating registry rejects with MANIFEST_UNKNOWN.
+func TestAttestBundleRetryAfterConflictError(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t, false)
+	digest := repo.Digest("sha256:" + strings.Repeat("9", 64))
+	h, err := v1.NewHash(digest.DigestStr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := &v1.Descriptor{Digest: h}
+	statements := newStatementsForDigest(t, digest, []string{"spdx", "cyclonedx"})
+	for _, stmt := range statements {
+		stmt.SubjectDescriptor = subject
+	}
+
+	// Seed an outdated SPDX bundle, which SKIPSAME will delete, and a
+	// CycloneDX referrer whose layer is not a bundle at all, which SKIPSAME
+	// will fail to read.
+	if err := writeBundleReferrer(digest, bundleWithDSSEPayload(t, []byte(`{"outdated":true}`)), "https://spdx.dev/Document", subject, nil); err != nil {
+		t.Fatalf("seeding outdated spdx referrer: %v", err)
+	}
+	if err := writeBundleReferrer(digest, []byte("not a bundle"), "https://cyclonedx.org/bom", subject, nil); err != nil {
+		t.Fatalf("seeding undecodable cyclonedx referrer: %v", err)
+	}
+
+	signer := &slowContentSigner{}
+	signer.t = t
+	if err := attestBundle(ctx, SkipSame, statements, signer, nil); err == nil {
+		t.Fatal("attestBundle(SKIPSAME) succeeded with an undecodable existing referrer")
+	}
+	if calls, _ := signer.tracker.snapshot(); calls != 0 {
+		t.Errorf("signed %d statements before the failure, want 0", calls)
+	}
+	// The SPDX deletion completed, so it must already be out of the index.
+	assertFallbackIndexConsistent(t, digest)
+
+	// A retry that cannot see the deleted manifest still has to succeed.
+	if err := attestBundle(ctx, Replace, statements, signer, nil); err != nil {
+		t.Fatalf("attestBundle(REPLACE) after a failed SKIPSAME = %v", err)
+	}
+	want := []string{"https://cyclonedx.org/bom", "https://spdx.dev/Document"}
+	if got := referrerPredicateTypes(t, digest); !slices.Equal(got, want) {
+		t.Errorf("discoverable referrers after retry = %v, want %v", got, want)
+	}
+	assertFallbackIndexConsistent(t, digest)
+}
