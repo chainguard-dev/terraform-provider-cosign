@@ -2,7 +2,9 @@ package secant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -14,10 +16,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/sigstore/cosign/v3/pkg/oci"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
 	"github.com/sigstore/sigstore-go/pkg/sign"
+	"github.com/sigstore/sigstore/pkg/signature"
 )
 
 // inFlightTracker counts concurrent calls, so a test can tell work that
@@ -73,6 +77,26 @@ func (f *slowRekorEntries) CreateLogEntryContext(ctx context.Context, params *en
 	return f.CreateLogEntry(params, opts...)
 }
 
+// serialCosigner wraps testCosigner and records how many signing calls are in
+// flight, so a test can check that AttestEntity never signs concurrently and
+// so never requires a signer that is safe for concurrent use.
+type serialCosigner struct {
+	*testCosigner
+	tracker inFlightTracker
+}
+
+func (c *serialCosigner) SignMessage(message io.Reader, opts ...signature.SignOption) ([]byte, error) {
+	c.tracker.enter()
+	defer c.tracker.leave()
+	return c.testCosigner.SignMessage(message, opts...)
+}
+
+func (c *serialCosigner) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, error) {
+	c.tracker.enter()
+	defer c.tracker.leave()
+	return c.testCosigner.Cosign(ctx, payload)
+}
+
 // newStatementsForDigest builds one statement per predicate type for digest,
 // each with a distinct payload so SKIPSAME cannot collapse them.
 func newStatementsForDigest(t *testing.T, digest name.Digest, predicateTypes []string) []*types.Statement {
@@ -88,41 +112,10 @@ func newStatementsForDigest(t *testing.T, digest name.Digest, predicateTypes []s
 	return statements
 }
 
-// TestAttestUploadsStatementsConcurrentlyInOrder pins the behavior that makes
-// a multi-statement attestation cost about one Rekor round trip: the uploads
-// overlap, and the attestations are still attached in the order the
-// statements were given.
-func TestAttestUploadsStatementsConcurrentlyInOrder(t *testing.T) {
-	ctx := context.Background()
-	srv := httptest.NewServer(registry.New())
-	t.Cleanup(srv.Close)
-	repo, err := name.NewRepository(strings.TrimPrefix(srv.URL, "http://") + "/test-repo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Never pushed: Attest works purely by digest.
-	digest := repo.Digest("sha256:" + strings.Repeat("b", 64))
-
-	predicateTypes := []string{"spdx", "cyclonedx", "custom"}
-	statements := newStatementsForDigest(t, digest, predicateTypes)
-
-	fake := &slowRekorEntries{delay: 200 * time.Millisecond}
-	rekorClient := &client.Rekor{Entries: fake}
-
-	start := time.Now()
-	if err := Attest(ctx, SkipSame, statements, newTestCosigner(t), rekorClient, nil); err != nil {
-		t.Fatalf("Attest() = %v", err)
-	}
-	elapsed := time.Since(start)
-
-	calls, maxInFlight := fake.tracker.snapshot()
-	if calls != len(statements) {
-		t.Errorf("got %d rekor uploads, want %d", calls, len(statements))
-	}
-	if maxInFlight < 2 {
-		t.Errorf("rekor uploads never overlapped: max in flight %d, elapsed %v", maxInFlight, elapsed)
-	}
-
+// attestedPredicateTypes reads back the legacy attestations of digest and
+// returns their predicate types in stored order.
+func attestedPredicateTypes(t *testing.T, digest name.Digest) []string {
+	t.Helper()
 	tag, err := ociremote.AttestationTag(digest)
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +136,50 @@ func TestAttestUploadsStatementsConcurrentlyInOrder(t *testing.T) {
 		}
 		got = append(got, ann["predicateType"])
 	}
+	return got
+}
+
+// TestAttestUploadsStatementsConcurrentlyInOrder pins the behavior that makes
+// a multi-statement attestation cost about one Rekor round trip: the uploads
+// overlap, signing stays sequential, and the attestations are still attached
+// in the order the statements were given.
+func TestAttestUploadsStatementsConcurrentlyInOrder(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	repo, err := name.NewRepository(strings.TrimPrefix(srv.URL, "http://") + "/test-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Never pushed: Attest works purely by digest.
+	digest := repo.Digest("sha256:" + strings.Repeat("b", 64))
+
+	predicateTypes := []string{"spdx", "cyclonedx", "custom"}
+	statements := newStatementsForDigest(t, digest, predicateTypes)
+
+	signer := &serialCosigner{testCosigner: newTestCosigner(t)}
+	fake := &slowRekorEntries{delay: 200 * time.Millisecond}
+	rekorClient := &client.Rekor{Entries: fake}
+
+	start := time.Now()
+	if err := Attest(ctx, SkipSame, statements, signer, rekorClient, nil); err != nil {
+		t.Fatalf("Attest() = %v", err)
+	}
+	elapsed := time.Since(start)
+
+	calls, maxInFlight := fake.tracker.snapshot()
+	if calls != len(statements) {
+		t.Errorf("got %d rekor uploads, want %d", calls, len(statements))
+	}
+	if maxInFlight < 2 {
+		t.Errorf("rekor uploads never overlapped: max in flight %d, elapsed %v", maxInFlight, elapsed)
+	}
+	// Only the uploads fan out. The signer interface makes no promise about
+	// concurrent use, so signing must stay one call at a time.
+	if _, signMax := signer.tracker.snapshot(); signMax != 1 {
+		t.Errorf("signer was called concurrently: max in flight %d, want 1", signMax)
+	}
+
 	// Attestations are attached one at a time in statement order, and the
 	// SKIPSAME replace op (replaceSignatures.Replace) puts each new attestation
 	// ahead of the existing ones, so the stored order is the statement order
@@ -153,8 +190,39 @@ func TestAttestUploadsStatementsConcurrentlyInOrder(t *testing.T) {
 		"https://cyclonedx.org/bom",
 		"https://spdx.dev/Document",
 	}
-	if !slices.Equal(got, want) {
+	if got := attestedPredicateTypes(t, digest); !slices.Equal(got, want) {
 		t.Errorf("attestation order = %v, want %v", got, want)
+	}
+}
+
+// TestAttestConcurrencyBelowOneIsSequential pins that AttestConcurrency values
+// below 1 mean sequential, not unbounded.
+func TestAttestConcurrencyBelowOneIsSequential(t *testing.T) {
+	old := AttestConcurrency
+	t.Cleanup(func() { AttestConcurrency = old })
+	AttestConcurrency = 0
+
+	ctx := context.Background()
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	repo, err := name.NewRepository(strings.TrimPrefix(srv.URL, "http://") + "/test-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := repo.Digest("sha256:" + strings.Repeat("a", 64))
+	statements := newStatementsForDigest(t, digest, []string{"spdx", "cyclonedx", "custom"})
+
+	fake := &slowRekorEntries{delay: 50 * time.Millisecond}
+	rekorClient := &client.Rekor{Entries: fake}
+	if err := Attest(ctx, SkipSame, statements, newTestCosigner(t), rekorClient, nil); err != nil {
+		t.Fatalf("Attest() = %v", err)
+	}
+	calls, maxInFlight := fake.tracker.snapshot()
+	if calls != len(statements) {
+		t.Errorf("got %d rekor uploads, want %d", calls, len(statements))
+	}
+	if maxInFlight != 1 {
+		t.Errorf("AttestConcurrency = 0 still overlapped uploads: max in flight %d, want 1", maxInFlight)
 	}
 }
 
@@ -202,41 +270,161 @@ func (f *slowContentSigner) SignContent(ctx context.Context, content sign.Conten
 	return f.fakeContentSigner.SignContent(ctx, content)
 }
 
-// TestAttestBundleSignsPredicateTypesConcurrently mirrors the legacy test for
-// the bundle path: statements of different predicate types are signed at the
-// same time, and every one ends up as a referrer.
+// requestsContaining returns the recorded "METHOD /path" lines that contain
+// substr.
+func (r *recordingRegistry) requestsContaining(substr string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var reqs []string
+	for _, req := range r.reqs {
+		if strings.Contains(req, substr) {
+			reqs = append(reqs, req)
+		}
+	}
+	return reqs
+}
+
+// referrerPredicateTypes returns the predicate types of every bundle referrer
+// discoverable through digest, sorted.
+func referrerPredicateTypes(t *testing.T, digest name.Digest) []string {
+	t.Helper()
+	var got []string
+	for _, raw := range referrerManifests(t, digest) {
+		var mf struct {
+			Annotations map[string]string `json:"annotations"`
+		}
+		if err := json.Unmarshal(raw, &mf); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, mf.Annotations[ociremote.BundlePredicateType])
+	}
+	slices.Sort(got)
+	return got
+}
+
+// TestAttestBundleSignsPredicateTypesConcurrently covers the bundle path on
+// both registry flavors: the statements are signed at the same time, the
+// subject's referrers are listed once rather than once per statement, every
+// statement ends up discoverable through the subject, and REPLACE and
+// SKIPSAME re-runs leave the registry consistent. The fallback-tag case is the
+// one where concurrent writes used to drop entries from the shared index.
 func TestAttestBundleSignsPredicateTypesConcurrently(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		referrersSupport bool
+	}{
+		{name: "native referrers", referrersSupport: true},
+		{name: "fallback tag index", referrersSupport: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo, rec := newRecordingTestRepo(t, tc.referrersSupport)
+			// Never pushed, as in apkoaas, so the statements carry the subject
+			// descriptor verbatim.
+			digest := repo.Digest("sha256:" + strings.Repeat("c", 64))
+			h, err := v1.NewHash(digest.DigestStr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			statements := newStatementsForDigest(t, digest, []string{"spdx", "cyclonedx", "custom"})
+			for _, stmt := range statements {
+				stmt.SubjectDescriptor = &v1.Descriptor{Digest: h}
+			}
+			want := []string{
+				"https://cosign.sigstore.dev/attestation/v1",
+				"https://cyclonedx.org/bom",
+				"https://spdx.dev/Document",
+			}
+
+			signer := &slowContentSigner{delay: 200 * time.Millisecond}
+			signer.t = t
+			start := time.Now()
+			if err := attestBundle(ctx, SkipSame, statements, signer, nil); err != nil {
+				t.Fatalf("attestBundle() = %v", err)
+			}
+			elapsed := time.Since(start)
+
+			calls, maxInFlight := signer.tracker.snapshot()
+			if calls != len(statements) {
+				t.Errorf("got %d bundle signs, want %d", calls, len(statements))
+			}
+			if maxInFlight < 2 {
+				t.Errorf("bundle signs never overlapped: max in flight %d, elapsed %v", maxInFlight, elapsed)
+			}
+			if got := referrerPredicateTypes(t, digest); !slices.Equal(got, want) {
+				t.Errorf("discoverable referrers = %v, want %v", got, want)
+			}
+			assertFallbackIndexConsistent(t, digest)
+
+			// REPLACE deletes all three and writes three more; the fallback
+			// index must end up listing exactly the new ones.
+			if err := attestBundle(ctx, Replace, statements, signer, nil); err != nil {
+				t.Fatalf("attestBundle(REPLACE) = %v", err)
+			}
+			replaced, _ := signer.tracker.snapshot()
+			if got := replaced - calls; got != len(statements) {
+				t.Errorf("REPLACE signed %d statements, want %d", got, len(statements))
+			}
+			if got := referrerPredicateTypes(t, digest); !slices.Equal(got, want) {
+				t.Errorf("discoverable referrers after REPLACE = %v, want %v", got, want)
+			}
+			assertFallbackIndexConsistent(t, digest)
+
+			// SKIPSAME finds every payload already present and signs nothing.
+			// With no writes in this run (each write probes the Referrers API
+			// too), the referrers requests are the conflict-resolution listing
+			// alone, which must happen once per subject, not once per statement.
+			rec.reset()
+			if err := attestBundle(ctx, SkipSame, statements, signer, nil); err != nil {
+				t.Fatalf("attestBundle(SKIPSAME) = %v", err)
+			}
+			skipped, _ := signer.tracker.snapshot()
+			if got := skipped - replaced; got != 0 {
+				t.Errorf("SKIPSAME re-run signed %d statements, want 0", got)
+			}
+			if got := rec.requestsContaining("/referrers/"); len(got) != 1 {
+				t.Errorf("SKIPSAME listed referrers %d times for one subject, want 1: %v", len(got), got)
+			}
+			if got := referrerPredicateTypes(t, digest); !slices.Equal(got, want) {
+				t.Errorf("discoverable referrers after SKIPSAME = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestAttestBundleRejectsDuplicatePredicateTypes mirrors newStatements for the
+// bundle path: under SKIPSAME and REPLACE two statements of one predicate type
+// would resolve against each other's write, so the batch is rejected before
+// anything is signed. APPEND has no conflicts to resolve and writes both.
+func TestAttestBundleRejectsDuplicatePredicateTypes(t *testing.T) {
 	ctx := context.Background()
-	repo := newTestRepo(t, true)
-	// Never pushed, as in apkoaas, so the statements carry the subject
-	// descriptor verbatim.
-	digest := repo.Digest("sha256:" + strings.Repeat("c", 64))
+	repo := newTestRepo(t, false)
+	digest := repo.Digest("sha256:" + strings.Repeat("f", 64))
 	h, err := v1.NewHash(digest.DigestStr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	predicateTypes := []string{"spdx", "cyclonedx", "custom"}
-	statements := newStatementsForDigest(t, digest, predicateTypes)
+	statements := newStatementsForDigest(t, digest, []string{"spdx", "spdx"})
 	for _, stmt := range statements {
 		stmt.SubjectDescriptor = &v1.Descriptor{Digest: h}
 	}
 
-	signer := &slowContentSigner{delay: 200 * time.Millisecond}
+	signer := &slowContentSigner{}
 	signer.t = t
-	start := time.Now()
-	if err := attestBundle(ctx, SkipSame, statements, signer, nil); err != nil {
-		t.Fatalf("attestBundle() = %v", err)
+	for _, conflict := range []string{SkipSame, Replace} {
+		if err := attestBundle(ctx, conflict, statements, signer, nil); err == nil {
+			t.Errorf("attestBundle(%s) succeeded with two statements of one predicate type", conflict)
+		}
 	}
-	elapsed := time.Since(start)
+	if calls, _ := signer.tracker.snapshot(); calls != 0 {
+		t.Errorf("got %d bundle signs for rejected batches, want 0", calls)
+	}
 
-	calls, maxInFlight := signer.tracker.snapshot()
-	if calls != len(statements) {
-		t.Errorf("got %d bundle signs, want %d", calls, len(statements))
-	}
-	if maxInFlight < 2 {
-		t.Errorf("bundle signs never overlapped: max in flight %d, elapsed %v", maxInFlight, elapsed)
+	if err := attestBundle(ctx, Append, statements, signer, nil); err != nil {
+		t.Fatalf("attestBundle(APPEND) = %v", err)
 	}
 	if got := len(referrerManifests(t, digest)); got != len(statements) {
-		t.Errorf("got %d referrers, want %d", got, len(statements))
+		t.Errorf("got %d referrers after APPEND, want %d", got, len(statements))
 	}
+	assertFallbackIndexConsistent(t, digest)
 }

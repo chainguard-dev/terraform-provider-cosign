@@ -340,10 +340,14 @@ func AttestBundle(ctx context.Context, conflict string, statements []*types.Stat
 // attestBundle is AttestBundle over the contentSigner seam, so tests can drive
 // it without Fulcio or Rekor.
 //
-// Statements that share a predicate type write to the same referrer and
-// resolve conflicts against each other, so they run one after another.
-// Different predicate types are independent, and each costs a Rekor round
-// trip, so they run concurrently, bounded by AttestConcurrency.
+// Statements are handled per subject. On a registry without the native
+// Referrers API every referrer write for a subject rewrites the same
+// client-maintained sha256-<subject> fallback-tag index with an unconditional
+// read, modify and write (go-containerregistry does so on each remote.Put of a
+// manifest with a subject, and pruneFallbackReferrers does so too), so two
+// writers for one subject can drop each other's entries. Only signing, which
+// is where the network time goes (TSA and Rekor v2 inside sign.Bundle), runs
+// concurrently; see attestBundleSubject.
 func attestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer contentSigner, ropt []remote.Option) error {
 	if len(statements) == 0 {
 		return nil
@@ -351,60 +355,117 @@ func attestBundle(ctx context.Context, conflict string, statements []*types.Stat
 
 	ociOpts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
-	// Group by predicate type, keeping the order in which each type first
-	// appears so the work is scheduled in the caller's order.
-	var order []string
+	// Group by subject, keeping the order in which each subject first appears.
+	var subjects []string
 	groups := map[string][]*types.Statement{}
 	for _, stmt := range statements {
+		key := stmt.Digest.String()
+		if _, ok := groups[key]; !ok {
+			subjects = append(subjects, key)
+		}
+		groups[key] = append(groups[key], stmt)
+	}
+
+	for _, key := range subjects {
+		if err := attestBundleSubject(ctx, conflict, groups[key], signer, ropt, ociOpts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attestBundleSubject attests the statements of one subject in three passes:
+// it resolves conflicts one statement at a time against a single listing of
+// the subject's referrers, signs the statements that still need writing with
+// bounded overlap (see AttestConcurrency), and then writes the referrers one
+// at a time in statement order.
+func attestBundleSubject(ctx context.Context, conflict string, statements []*types.Statement, signer contentSigner, ropt []remote.Option, ociOpts []ociremote.Option) error {
+	subject := statements[0].Digest
+
+	predicateTypes := make([]string, len(statements))
+	for i, stmt := range statements {
 		predicateType, err := parsePredicateType(stmt.Type)
 		if err != nil {
 			return err
 		}
-		if _, ok := groups[predicateType]; !ok {
-			order = append(order, predicateType)
-		}
-		groups[predicateType] = append(groups[predicateType], stmt)
+		predicateTypes[i] = predicateType
 	}
 
+	write := make([]bool, len(statements))
+	switch conflict {
+	case "", Append:
+		for i := range write {
+			write[i] = true
+		}
+	case SkipSame, Replace:
+		// Two statements of one predicate type would have to resolve against
+		// each other's write, which a single listing cannot see. The legacy
+		// path rejects this too (see newStatements).
+		seen := map[string]int{}
+		for _, predicateType := range predicateTypes {
+			seen[predicateType]++
+		}
+		for _, predicateType := range predicateTypes {
+			if n := seen[predicateType]; n != 1 {
+				return fmt.Errorf("expected 1 statement per predicateType, saw %d for %q", n, predicateType)
+			}
+		}
+
+		existing, err := bundleReferrersByPredicateType(subject, ociOpts, ropt)
+		if err != nil {
+			return fmt.Errorf("resolving conflict for %q: %w", subject.String(), err)
+		}
+		var deleted []v1.Hash
+		for i, stmt := range statements {
+			shouldWrite, superseded, err := supersedeBundleReferrers(subject, stmt.Payload, conflict, existing[predicateTypes[i]], ropt)
+			if err != nil {
+				return fmt.Errorf("resolving conflict for %q: %w", subject.String(), err)
+			}
+			write[i] = shouldWrite
+			deleted = append(deleted, superseded...)
+		}
+		// Drop the deleted referrers from a fallback-tag index before any
+		// write reads it; see resolveBundleConflict for why.
+		if err := pruneFallbackReferrers(subject, deleted, ropt); err != nil {
+			return fmt.Errorf("pruning fallback referrers for %q: %w", subject.String(), err)
+		}
+	default:
+		return fmt.Errorf("unknown conflict mode: %q", conflict)
+	}
+
+	// Sign with bounded overlap. BundleSigner supports concurrent callers.
+	bundles := make([][]byte, len(statements))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(attestConcurrencyLimit())
-	for _, predicateType := range order {
-		stmts := groups[predicateType]
+	for i, stmt := range statements {
+		if !write[i] {
+			continue
+		}
 		g.Go(func() error {
-			for _, stmt := range stmts {
-				if err := attestBundleStatement(gctx, conflict, stmt, predicateType, signer, ropt, ociOpts); err != nil {
-					return err
-				}
+			content := &sign.DSSEData{
+				Data:        stmt.Payload,
+				PayloadType: ctypes.IntotoPayloadType,
 			}
+			bundleBytes, err := signer.SignContent(gctx, content)
+			if err != nil {
+				return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
+			}
+			bundles[i] = bundleBytes
 			return nil
 		})
 	}
-	return g.Wait()
-}
-
-// attestBundleStatement resolves the conflict policy for one statement, signs
-// it as a bundle and writes it as a referrer.
-func attestBundleStatement(ctx context.Context, conflict string, stmt *types.Statement, predicateType string, signer contentSigner, ropt []remote.Option, ociOpts []ociremote.Option) error {
-	shouldWrite, err := resolveBundleConflict(stmt.Digest, predicateType, stmt.Payload, conflict, ropt, ociOpts)
-	if err != nil {
-		return fmt.Errorf("resolving conflict for %q: %w", stmt.Digest.String(), err)
-	}
-	if !shouldWrite {
-		return nil
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
-	content := &sign.DSSEData{
-		Data:        stmt.Payload,
-		PayloadType: ctypes.IntotoPayloadType,
-	}
-
-	bundleBytes, err := signer.SignContent(ctx, content)
-	if err != nil {
-		return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
-	}
-
-	if err := writeBundleReferrer(stmt.Digest, bundleBytes, predicateType, stmt.SubjectDescriptor, ropt); err != nil {
-		return fmt.Errorf("writing attestation bundle for %q: %w", stmt.Digest.String(), err)
+	// Write one at a time: each write may rewrite the subject's fallback index.
+	for i, stmt := range statements {
+		if !write[i] {
+			continue
+		}
+		if err := writeBundleReferrer(stmt.Digest, bundles[i], predicateTypes[i], stmt.SubjectDescriptor, ropt); err != nil {
+			return fmt.Errorf("writing attestation bundle for %q: %w", stmt.Digest.String(), err)
+		}
 	}
 	return nil
 }
@@ -430,6 +491,32 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		return false, err
 	}
 
+	shouldWrite, deleted, err := supersedeBundleReferrers(digest, newPayload, conflict, matching, ropt)
+	if err != nil {
+		return false, err
+	}
+
+	// On a registry without the native Referrers API, go-containerregistry
+	// tracks referrers in a client-maintained sha256-<subject> fallback-tag
+	// index. remote.Delete removes the referrer manifest but does NOT prune the
+	// descriptor from that index (a documented gap in go-containerregistry's
+	// Pusher.Delete). The next writeBundleReferrer would then read the stale
+	// index, append the new referrer, and re-PUT an index still referencing the
+	// just-deleted manifest, which a registry that validates index members
+	// rejects with MANIFEST_UNKNOWN. Prune the deleted descriptors now so the
+	// subsequent write commits a consistent index.
+	if err := pruneFallbackReferrers(digest, deleted, ropt); err != nil {
+		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
+	}
+	return shouldWrite, nil
+}
+
+// supersedeBundleReferrers applies the conflict policy to a pending bundle
+// write for digest, given the existing bundle referrers of its predicate type
+// (see resolveBundleConflict for the policy). It deletes the referrers the
+// write supersedes and returns whether to write, together with the digests it
+// deleted, for the caller to prune from a fallback-tag index.
+func supersedeBundleReferrers(digest name.Digest, newPayload []byte, conflict string, matching []v1.Descriptor, ropt []remote.Option) (bool, []v1.Hash, error) {
 	var keep *v1.Hash
 	if conflict == SkipSame {
 		for _, m := range matching {
@@ -441,7 +528,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 				if isReferrerNotFound(err) {
 					continue
 				}
-				return false, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
+				return false, nil, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
 			}
 			if bytes.Equal(payload, newPayload) {
 				d := m.Digest
@@ -458,7 +545,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		}
 		ref := digest.Digest(m.Digest.String())
 		if err := remote.Delete(ref, ropt...); err != nil && !isReferrerNotFound(err) {
-			return false, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
+			return false, nil, fmt.Errorf("deleting referrer %s: %w", m.Digest, err)
 		}
 		// A NOT_FOUND delete means a stale referrers-index entry whose manifest
 		// is already gone — the outcome the conflict policy wants. Record it as
@@ -466,20 +553,7 @@ func resolveBundleConflict(digest name.Digest, predicateType string, newPayload 
 		// index.
 		deleted = append(deleted, m.Digest)
 	}
-
-	// On a registry without the native Referrers API, go-containerregistry
-	// tracks referrers in a client-maintained sha256-<subject> fallback-tag
-	// index. remote.Delete removes the referrer manifest but does NOT prune the
-	// descriptor from that index (a documented gap in go-containerregistry's
-	// Pusher.Delete). The next writeBundleReferrer would then read the stale
-	// index, append the new referrer, and re-PUT an index still referencing the
-	// just-deleted manifest, which a registry that validates index members
-	// rejects with MANIFEST_UNKNOWN. Prune the deleted descriptors now so the
-	// subsequent write commits a consistent index.
-	if err := pruneFallbackReferrers(digest, deleted, ropt); err != nil {
-		return false, fmt.Errorf("pruning fallback referrers for %q: %w", digest.String(), err)
-	}
-	return keep == nil, nil
+	return keep == nil, deleted, nil
 }
 
 // pruneFallbackReferrers removes the given descriptors from the sha256-<subject>
@@ -552,41 +626,51 @@ func isReferrerNotFound(err error) bool {
 // filters bundle referrers in pkg/oci/remote/signatures.go.
 const bundleMediaTypePrefix = "application/vnd.dev.sigstore.bundle"
 
-// matchingBundleReferrers returns referrer descriptors for digest that are
-// sigstore bundles carrying predicateType. It trusts the referrers-index
-// descriptor when the registry populated both artifactType and the
-// predicateType annotation, and otherwise consults the referrer manifest, which
-// is authoritative on every registry. This keeps REPLACE/SKIPSAME correct on
-// registries that omit those fields from the referrers index — notably
-// go-containerregistry's tag-schema fallback, whose index descriptors carry an
-// artifactType but no annotations.
-func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option, ropt []remote.Option) ([]v1.Descriptor, error) {
+// bundleReferrersByPredicateType lists digest's referrers once and returns the
+// sigstore bundles among them, grouped by the predicate type each carries.
+func bundleReferrersByPredicateType(digest name.Digest, opts []ociremote.Option, ropt []remote.Option) (map[string][]v1.Descriptor, error) {
 	idx, err := ociremote.Referrers(digest, "", opts...)
 	if err != nil {
 		return nil, fmt.Errorf("listing referrers: %w", err)
 	}
 
-	var matching []v1.Descriptor
+	byType := map[string][]v1.Descriptor{}
 	for _, m := range idx.Manifests {
-		ok, err := bundleReferrerMatches(digest.Repository, m, predicateType, ropt)
+		predicateType, ok, err := bundleReferrerPredicateType(digest.Repository, m, ropt)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			matching = append(matching, m)
+			byType[predicateType] = append(byType[predicateType], m)
 		}
 	}
-	return matching, nil
+	return byType, nil
 }
 
-// bundleReferrerMatches reports whether the referrer described by m is a
-// sigstore bundle carrying predicateType.
-func bundleReferrerMatches(repo name.Repository, m v1.Descriptor, predicateType string, ropt []remote.Option) (bool, error) {
+// matchingBundleReferrers returns referrer descriptors for digest that are
+// sigstore bundles carrying predicateType.
+func matchingBundleReferrers(digest name.Digest, predicateType string, opts []ociremote.Option, ropt []remote.Option) ([]v1.Descriptor, error) {
+	byType, err := bundleReferrersByPredicateType(digest, opts, ropt)
+	if err != nil {
+		return nil, err
+	}
+	return byType[predicateType], nil
+}
+
+// bundleReferrerPredicateType reports whether the referrer described by m is a
+// sigstore bundle and, if so, the predicate type it carries. It trusts the
+// referrers-index descriptor when the registry populated both artifactType and
+// the predicateType annotation, and otherwise consults the referrer manifest,
+// which is authoritative on every registry. This keeps REPLACE/SKIPSAME correct
+// on registries that omit those fields from the referrers index — notably
+// go-containerregistry's tag-schema fallback, whose index descriptors carry an
+// artifactType but no annotations.
+func bundleReferrerPredicateType(repo name.Repository, m v1.Descriptor, ropt []remote.Option) (string, bool, error) {
 	// Fast path: the index descriptor already carries what we need (zot, GAR, …),
 	// so no per-referrer manifest fetch is required.
 	if strings.HasPrefix(m.ArtifactType, bundleMediaTypePrefix) {
 		if pt, ok := m.Annotations[ociremote.BundlePredicateType]; ok {
-			return pt == predicateType, nil
+			return pt, true, nil
 		}
 	}
 
@@ -599,12 +683,25 @@ func bundleReferrerMatches(repo name.Repository, m v1.Descriptor, predicateType 
 	if err != nil {
 		if isReferrerNotFound(err) {
 			// Dangling fallback-index entry for an already-deleted referrer.
-			return false, nil
+			return "", false, nil
 		}
+		return "", false, err
+	}
+	if !strings.HasPrefix(at, bundleMediaTypePrefix) {
+		return "", false, nil
+	}
+	pt, ok := ann[ociremote.BundlePredicateType]
+	return pt, ok, nil
+}
+
+// bundleReferrerMatches reports whether the referrer described by m is a
+// sigstore bundle carrying predicateType.
+func bundleReferrerMatches(repo name.Repository, m v1.Descriptor, predicateType string, ropt []remote.Option) (bool, error) {
+	pt, ok, err := bundleReferrerPredicateType(repo, m, ropt)
+	if err != nil {
 		return false, err
 	}
-	return strings.HasPrefix(at, bundleMediaTypePrefix) &&
-		ann[ociremote.BundlePredicateType] == predicateType, nil
+	return ok && pt == predicateType, nil
 }
 
 // referrerManifestInfo fetches a referrer manifest and returns its top-level

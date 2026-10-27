@@ -44,20 +44,20 @@ var (
 // both the pre-call waits here and the retry-time waits inside tlog.Upload.
 var RekorRateLimiter = tlog.RekorRateLimiter
 
-// AttestConcurrency bounds how many of one subject's statements AttestEntity
-// and AttestBundle sign and upload to Rekor at the same time. Each statement
-// costs a Rekor round trip, which dominates the work, so uploading them
-// concurrently brings a multi-statement attestation down from N round trips
-// to about one. RekorRateLimiter still governs the overall request rate; this
-// only changes how much of that budget one subject may use at once. Values
-// below 1 remove the bound.
+// AttestConcurrency bounds how many of one subject's Rekor uploads AttestEntity
+// keeps in flight at once, and how many of its bundle signatures AttestBundle
+// requests at once. The Rekor round trip is what each statement waits on, so
+// overlapping the uploads takes a subject with N statements from N round trips
+// down to about ceil(N / AttestConcurrency). RekorRateLimiter still governs the
+// overall request rate; this only changes how much of that budget one subject
+// may use at once. Values below 1 are treated as 1, which is the sequential
+// behaviour.
 var AttestConcurrency = 8
 
-// attestConcurrencyLimit converts AttestConcurrency into an errgroup limit,
-// where a negative value means no limit.
+// attestConcurrencyLimit converts AttestConcurrency into an errgroup limit.
 func attestConcurrencyLimit() int {
 	if AttestConcurrency < 1 {
-		return -1
+		return 1
 	}
 	return AttestConcurrency
 }
@@ -144,22 +144,29 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		}
 	}
 
-	// Sign each statement and log it to Rekor concurrently. The statements
-	// are independent until they are attached, and the Rekor round trip is
-	// what each one waits on, so this takes about one round trip instead of
-	// one per statement. Attaching happens afterwards, in the order the
-	// statements were given, so the resulting entity is the same as the
-	// sequential one.
-	prepared := make([]*preparedAttestation, len(statements))
+	// Sign the statements and build their Rekor entries one at a time. Signing
+	// is local work, and this keeps AttestEntity from requiring a signer that
+	// is safe for concurrent use.
+	pending := make([]*pendingAttestation, len(statements))
+	for i, statement := range statements {
+		p, err := proposeAttestation(ctx, statement, sv, attestOpts)
+		if err != nil {
+			return nil, err
+		}
+		pending[i] = p
+	}
+
+	// Upload the entries to Rekor with bounded overlap; see AttestConcurrency.
+	entries := make([]*models.LogEntryAnon, len(pending))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(attestConcurrencyLimit())
-	for i, statement := range statements {
+	for i, p := range pending {
 		g.Go(func() error {
-			p, err := prepareAttestation(gctx, statement, sv, rekorClient, attestOpts)
+			entry, err := tlog.Upload(gctx, rekorClient, p.entry)
 			if err != nil {
-				return err
+				return fmt.Errorf("uploading to rekor (predicate type %q): %w", p.statement.Type, err)
 			}
-			prepared[i] = p
+			entries[i] = entry
 			return nil
 		})
 	}
@@ -167,14 +174,21 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 		return nil, err
 	}
 
-	for _, p := range prepared {
+	// Attach in the order the statements were given, so the resulting entity
+	// is the same as the sequential one.
+	for i, p := range pending {
+		att, err := p.attestation(entries[i])
+		if err != nil {
+			return nil, err
+		}
+
 		signOpts := []mutate.SignOption{}
 		if conflict != Append {
 			signOpts = append(signOpts, mutate.WithReplaceOp(replacePredicate(p.predicateType)))
 		}
 
 		// Attach the attestation to the entity.
-		se, err = mutate.AttachAttestationToEntity(se, p.att, signOpts...)
+		se, err = mutate.AttachAttestationToEntity(se, att, signOpts...)
 		if err != nil {
 			return nil, err
 		}
@@ -182,16 +196,24 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 	return se, nil
 }
 
-// preparedAttestation is a signed, Rekor-logged attestation that has not been
-// attached to its entity yet.
-type preparedAttestation struct {
-	att           oci.Signature
+// pendingAttestation is a signed statement whose Rekor entry has been proposed
+// but not uploaded yet.
+type pendingAttestation struct {
+	statement     *types.Statement
 	predicateType string
+	envelope      []byte
+	rawCert       []byte
+	rawChain      []byte
+	entry         models.ProposedEntry
 }
 
-// prepareAttestation signs one statement, logs the signature to Rekor and
-// wraps the result as an attestation ready to attach.
-func prepareAttestation(ctx context.Context, statement *types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, attestOpts *attestOptions) (*preparedAttestation, error) {
+// proposeAttestation signs one statement and builds the Rekor entry for it.
+func proposeAttestation(ctx context.Context, statement *types.Statement, sv types.CosignerSignerVerifier, attestOpts *attestOptions) (*pendingAttestation, error) {
+	predicateType, err := parsePredicateType(statement.Type)
+	if err != nil {
+		return nil, err
+	}
+
 	pae := dsse.PAE(ctypes.IntotoPayloadType, statement.Payload)
 	signed, err := sv.SignMessage(bytes.NewReader(pae), options.WithContext(ctx))
 	if err != nil {
@@ -254,33 +276,29 @@ func prepareAttestation(ctx context.Context, statement *types.Statement, sv type
 	default:
 		return nil, fmt.Errorf("invalid rekor entry type: %q", attestOpts.rekorEntryType)
 	}
-	entry, err := tlog.Upload(ctx, rekorClient, e)
-	if err != nil {
-		return nil, fmt.Errorf("uploading to rekor (predicate type %q): %w", statement.Type, err)
-	}
 
-	bundle := tlog.EntryToBundle(entry)
+	return &pendingAttestation{
+		statement:     statement,
+		predicateType: predicateType,
+		envelope:      envelope,
+		rawCert:       rawCert,
+		rawChain:      rawChain,
+		entry:         e,
+	}, nil
+}
 
-	predicateType, err := parsePredicateType(statement.Type)
-	if err != nil {
-		return nil, err
-	}
-
+// attestation wraps the signed envelope and its uploaded Rekor entry as an
+// attestation ready to attach.
+func (p *pendingAttestation) attestation(entry *models.LogEntryAnon) (oci.Signature, error) {
 	opts := []static.Option{
-		static.WithCertChain(rawCert, rawChain),
-		static.WithBundle(bundle),
+		static.WithCertChain(p.rawCert, p.rawChain),
+		static.WithBundle(tlog.EntryToBundle(entry)),
 		static.WithLayerMediaType(ctypes.DssePayloadType),
 		static.WithAnnotations(map[string]string{
-			"predicateType": predicateType,
+			"predicateType": p.predicateType,
 		}),
 	}
-
-	att, err := static.NewAttestation(envelope, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &preparedAttestation{att: att, predicateType: predicateType}, nil
+	return static.NewAttestation(p.envelope, opts...)
 }
 
 // Attest is roughly equivalent to cosign attest.
