@@ -8,7 +8,7 @@ require (
 	github.com/go-openapi/runtime v0.33.3
 	github.com/go-openapi/strfmt v0.27.3
 	github.com/go-openapi/swag/conv v0.29.2
-	github.com/google/certificate-transparency-go v1.3.3
+	github.com/google/certificate-transparency-go v1.4.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/uuid v1.6.0
