@@ -30,6 +30,7 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/models"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature/options"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -42,6 +43,24 @@ var (
 // 5 QPS limit. Aliased to tlog.RekorRateLimiter so the same instance governs
 // both the pre-call waits here and the retry-time waits inside tlog.Upload.
 var RekorRateLimiter = tlog.RekorRateLimiter
+
+// AttestConcurrency bounds how many of one subject's statements AttestEntity
+// and AttestBundle sign and upload to Rekor at the same time. Each statement
+// costs a Rekor round trip, which dominates the work, so uploading them
+// concurrently brings a multi-statement attestation down from N round trips
+// to about one. RekorRateLimiter still governs the overall request rate; this
+// only changes how much of that budget one subject may use at once. Values
+// below 1 remove the bound.
+var AttestConcurrency = 8
+
+// attestConcurrencyLimit converts AttestConcurrency into an errgroup limit,
+// where a negative value means no limit.
+func attestConcurrencyLimit() int {
+	if AttestConcurrency < 1 {
+		return -1
+	}
+	return AttestConcurrency
+}
 
 // RegisterMetrics registers secant's collectors with r. Hosts that scrape
 // metrics call this once (typically with prometheus.DefaultRegisterer); the
@@ -117,112 +136,151 @@ func AttestEntity(ctx context.Context, se oci.SignedEntity, conflict string, sta
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
+	// Make sure these statements are all for the same subject before signing
+	// any of them.
 	for _, statement := range statements {
-		// Make sure these statements are all for the same subject.
 		if digest != statement.Digest {
 			return nil, fmt.Errorf("mismatched attestations: %s != %s", digest.String(), statement.Digest.String())
 		}
+	}
 
-		pae := dsse.PAE(ctypes.IntotoPayloadType, statement.Payload)
-		signed, err := sv.SignMessage(bytes.NewReader(pae), options.WithContext(ctx))
-		if err != nil {
-			return nil, fmt.Errorf("signing pae: %w", err)
-		}
-
-		env := dsse.Envelope{
-			PayloadType: ctypes.IntotoPayloadType,
-			Payload:     base64.StdEncoding.EncodeToString(statement.Payload),
-			Signatures: []dsse.Signature{
-				{
-					Sig: base64.StdEncoding.EncodeToString(signed),
-				},
-			},
-		}
-
-		envelope, err := json.Marshal(env)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling envelope: %w", err)
-		}
-
-		// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
-		sig, err := sv.Cosign(ctx, bytes.NewReader(envelope))
-		if err != nil {
-			return nil, fmt.Errorf("signing envelope: %w", err)
-		}
-
-		cert, err := sig.Cert()
-		if err != nil {
-			return nil, err
-		}
-
-		rawCert, err := cryptoutils.MarshalCertificateToPEM(cert)
-		if err != nil {
-			return nil, err
-		}
-
-		chain, err := sig.Chain()
-		if err != nil {
-			return nil, err
-		}
-
-		rawChain, err := cryptoutils.MarshalCertificatesToPEM(chain)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling chain: %w", err)
-		}
-
-		var e models.ProposedEntry
-		switch attestOpts.rekorEntryType {
-		case intotoType:
-			e, err = intoto.Entry(ctx, envelope, rawCert)
+	// Sign each statement and log it to Rekor concurrently. The statements
+	// are independent until they are attached, and the Rekor round trip is
+	// what each one waits on, so this takes about one round trip instead of
+	// one per statement. Attaching happens afterwards, in the order the
+	// statements were given, so the resulting entity is the same as the
+	// sequential one.
+	prepared := make([]*preparedAttestation, len(statements))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(attestConcurrencyLimit())
+	for i, statement := range statements {
+		g.Go(func() error {
+			p, err := prepareAttestation(gctx, statement, sv, rekorClient, attestOpts)
 			if err != nil {
-				return nil, fmt.Errorf("creating intoto entry: %w", err)
+				return err
 			}
-		case dsseType:
-			e, err = rekordsse.Entry(ctx, envelope, rawCert)
-			if err != nil {
-				return nil, fmt.Errorf("creating dsse entry: %w", err)
-			}
-		default:
-			return nil, fmt.Errorf("invalid rekor entry type: %q", attestOpts.rekorEntryType)
-		}
-		entry, err := tlog.Upload(ctx, rekorClient, e)
-		if err != nil {
-			return nil, fmt.Errorf("uploading to rekor (predicate type %q): %w", statement.Type, err)
-		}
+			prepared[i] = p
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
-		bundle := tlog.EntryToBundle(entry)
-
-		predicateType, err := parsePredicateType(statement.Type)
-		if err != nil {
-			return nil, err
-		}
-
-		opts := []static.Option{
-			static.WithCertChain(rawCert, rawChain),
-			static.WithBundle(bundle),
-			static.WithLayerMediaType(ctypes.DssePayloadType),
-			static.WithAnnotations(map[string]string{
-				"predicateType": predicateType,
-			}),
-		}
-
-		att, err := static.NewAttestation(envelope, opts...)
-		if err != nil {
-			return nil, err
-		}
-
+	for _, p := range prepared {
 		signOpts := []mutate.SignOption{}
 		if conflict != Append {
-			signOpts = append(signOpts, mutate.WithReplaceOp(replacePredicate(predicateType)))
+			signOpts = append(signOpts, mutate.WithReplaceOp(replacePredicate(p.predicateType)))
 		}
 
 		// Attach the attestation to the entity.
-		se, err = mutate.AttachAttestationToEntity(se, att, signOpts...)
+		se, err = mutate.AttachAttestationToEntity(se, p.att, signOpts...)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return se, nil
+}
+
+// preparedAttestation is a signed, Rekor-logged attestation that has not been
+// attached to its entity yet.
+type preparedAttestation struct {
+	att           oci.Signature
+	predicateType string
+}
+
+// prepareAttestation signs one statement, logs the signature to Rekor and
+// wraps the result as an attestation ready to attach.
+func prepareAttestation(ctx context.Context, statement *types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, attestOpts *attestOptions) (*preparedAttestation, error) {
+	pae := dsse.PAE(ctypes.IntotoPayloadType, statement.Payload)
+	signed, err := sv.SignMessage(bytes.NewReader(pae), options.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("signing pae: %w", err)
+	}
+
+	env := dsse.Envelope{
+		PayloadType: ctypes.IntotoPayloadType,
+		Payload:     base64.StdEncoding.EncodeToString(statement.Payload),
+		Signatures: []dsse.Signature{
+			{
+				Sig: base64.StdEncoding.EncodeToString(signed),
+			},
+		},
+	}
+
+	envelope, err := json.Marshal(env)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling envelope: %w", err)
+	}
+
+	// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
+	sig, err := sv.Cosign(ctx, bytes.NewReader(envelope))
+	if err != nil {
+		return nil, fmt.Errorf("signing envelope: %w", err)
+	}
+
+	cert, err := sig.Cert()
+	if err != nil {
+		return nil, err
+	}
+
+	rawCert, err := cryptoutils.MarshalCertificateToPEM(cert)
+	if err != nil {
+		return nil, err
+	}
+
+	chain, err := sig.Chain()
+	if err != nil {
+		return nil, err
+	}
+
+	rawChain, err := cryptoutils.MarshalCertificatesToPEM(chain)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling chain: %w", err)
+	}
+
+	var e models.ProposedEntry
+	switch attestOpts.rekorEntryType {
+	case intotoType:
+		e, err = intoto.Entry(ctx, envelope, rawCert)
+		if err != nil {
+			return nil, fmt.Errorf("creating intoto entry: %w", err)
+		}
+	case dsseType:
+		e, err = rekordsse.Entry(ctx, envelope, rawCert)
+		if err != nil {
+			return nil, fmt.Errorf("creating dsse entry: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("invalid rekor entry type: %q", attestOpts.rekorEntryType)
+	}
+	entry, err := tlog.Upload(ctx, rekorClient, e)
+	if err != nil {
+		return nil, fmt.Errorf("uploading to rekor (predicate type %q): %w", statement.Type, err)
+	}
+
+	bundle := tlog.EntryToBundle(entry)
+
+	predicateType, err := parsePredicateType(statement.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := []static.Option{
+		static.WithCertChain(rawCert, rawChain),
+		static.WithBundle(bundle),
+		static.WithLayerMediaType(ctypes.DssePayloadType),
+		static.WithAnnotations(map[string]string{
+			"predicateType": predicateType,
+		}),
+	}
+
+	att, err := static.NewAttestation(envelope, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &preparedAttestation{att: att, predicateType: predicateType}, nil
 }
 
 // Attest is roughly equivalent to cosign attest.

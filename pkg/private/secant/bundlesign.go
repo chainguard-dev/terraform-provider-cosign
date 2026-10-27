@@ -32,6 +32,7 @@ import (
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/sign"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -333,41 +334,78 @@ func signBundleDigest(ctx context.Context, conflict string, annotations map[stri
 // Statements may carry a verbatim subject descriptor (Statement.SubjectDescriptor)
 // for subjects that are absent from the target repository.
 func AttestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer *BundleSigner, ropt []remote.Option) error {
+	return attestBundle(ctx, conflict, statements, signer, ropt)
+}
+
+// attestBundle is AttestBundle over the contentSigner seam, so tests can drive
+// it without Fulcio or Rekor.
+//
+// Statements that share a predicate type write to the same referrer and
+// resolve conflicts against each other, so they run one after another.
+// Different predicate types are independent, and each costs a Rekor round
+// trip, so they run concurrently, bounded by AttestConcurrency.
+func attestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer contentSigner, ropt []remote.Option) error {
 	if len(statements) == 0 {
 		return nil
 	}
 
 	ociOpts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
+	// Group by predicate type, keeping the order in which each type first
+	// appears so the work is scheduled in the caller's order.
+	var order []string
+	groups := map[string][]*types.Statement{}
 	for _, stmt := range statements {
 		predicateType, err := parsePredicateType(stmt.Type)
 		if err != nil {
 			return err
 		}
-
-		shouldWrite, err := resolveBundleConflict(stmt.Digest, predicateType, stmt.Payload, conflict, ropt, ociOpts)
-		if err != nil {
-			return fmt.Errorf("resolving conflict for %q: %w", stmt.Digest.String(), err)
+		if _, ok := groups[predicateType]; !ok {
+			order = append(order, predicateType)
 		}
-		if !shouldWrite {
-			continue
-		}
-
-		content := &sign.DSSEData{
-			Data:        stmt.Payload,
-			PayloadType: ctypes.IntotoPayloadType,
-		}
-
-		bundleBytes, err := signer.SignContent(ctx, content)
-		if err != nil {
-			return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
-		}
-
-		if err := writeBundleReferrer(stmt.Digest, bundleBytes, predicateType, stmt.SubjectDescriptor, ropt); err != nil {
-			return fmt.Errorf("writing attestation bundle for %q: %w", stmt.Digest.String(), err)
-		}
+		groups[predicateType] = append(groups[predicateType], stmt)
 	}
 
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(attestConcurrencyLimit())
+	for _, predicateType := range order {
+		stmts := groups[predicateType]
+		g.Go(func() error {
+			for _, stmt := range stmts {
+				if err := attestBundleStatement(gctx, conflict, stmt, predicateType, signer, ropt, ociOpts); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return g.Wait()
+}
+
+// attestBundleStatement resolves the conflict policy for one statement, signs
+// it as a bundle and writes it as a referrer.
+func attestBundleStatement(ctx context.Context, conflict string, stmt *types.Statement, predicateType string, signer contentSigner, ropt []remote.Option, ociOpts []ociremote.Option) error {
+	shouldWrite, err := resolveBundleConflict(stmt.Digest, predicateType, stmt.Payload, conflict, ropt, ociOpts)
+	if err != nil {
+		return fmt.Errorf("resolving conflict for %q: %w", stmt.Digest.String(), err)
+	}
+	if !shouldWrite {
+		return nil
+	}
+
+	content := &sign.DSSEData{
+		Data:        stmt.Payload,
+		PayloadType: ctypes.IntotoPayloadType,
+	}
+
+	bundleBytes, err := signer.SignContent(ctx, content)
+	if err != nil {
+		return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
+	}
+
+	if err := writeBundleReferrer(stmt.Digest, bundleBytes, predicateType, stmt.SubjectDescriptor, ropt); err != nil {
+		return fmt.Errorf("writing attestation bundle for %q: %w", stmt.Digest.String(), err)
+	}
 	return nil
 }
 
