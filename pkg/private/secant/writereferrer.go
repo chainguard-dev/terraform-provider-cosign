@@ -101,6 +101,9 @@ func writeBundleReferrer(d name.Digest, bundleBytes []byte, predicateType string
 // newReferrerManifest assembles the OCI 1.1 referrer manifest for a bundle
 // attestation, mirroring cosign's layout (see writeBundleReferrer).
 func newReferrerManifest(configDesc, bundleDesc v1.Descriptor, subject *v1.Descriptor, bundleMediaType, predicateType string) referrerManifest {
+	bundleDesc.Annotations = map[string]string{
+		"org.opencontainers.image.title": fmt.Sprintf("%s-%s.sigstore.json", bundleDesc.Digest.Algorithm, bundleDesc.Digest.Hex),
+	}
 	return referrerManifest{
 		Manifest: v1.Manifest{
 			SchemaVersion: 2,

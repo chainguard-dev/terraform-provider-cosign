@@ -262,6 +262,10 @@ func TestNewReferrerManifest(t *testing.T) {
 		t.Errorf("created annotation %q is not RFC3339: %v", created, err)
 	}
 
+	wantBundleDesc := bundleDesc
+	wantBundleDesc.Annotations = map[string]string{
+		"org.opencontainers.image.title": "sha256-" + strings.Repeat("22", 32) + ".sigstore.json",
+	}
 	want := referrerManifest{
 		Manifest: v1.Manifest{
 			SchemaVersion: 2,
@@ -272,7 +276,7 @@ func TestNewReferrerManifest(t *testing.T) {
 				Digest:       configDesc.Digest,
 				Size:         configDesc.Size,
 			},
-			Layers:  []v1.Descriptor{bundleDesc},
+			Layers:  []v1.Descriptor{wantBundleDesc},
 			Subject: subject,
 			Annotations: map[string]string{
 				"org.opencontainers.image.created": created,
