@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -18,8 +19,9 @@ import (
 var _ sign.CertificateProvider = (*CachingCertProvider)(nil)
 
 // NewCertProvider returns a sigstore-go Fulcio client for the Fulcio instance
-// selected from sc, configured as cosign configures it for bundle signing.
-func NewCertProvider(sc *root.SigningConfig) (sign.CertificateProvider, error) {
+// selected from sc, configured as cosign configures it for bundle signing and
+// sending requests through transport (http.DefaultTransport if nil).
+func NewCertProvider(sc *root.SigningConfig, transport http.RoundTripper) (sign.CertificateProvider, error) {
 	if len(sc.FulcioCertificateAuthorityURLs()) == 0 {
 		return nil, errors.New("no fulcio URLs provided in signing config")
 	}
@@ -28,9 +30,10 @@ func NewCertProvider(sc *root.SigningConfig) (sign.CertificateProvider, error) {
 		return nil, fmt.Errorf("selecting fulcio service: %w", err)
 	}
 	return sign.NewFulcio(&sign.FulcioOptions{
-		BaseURL: svc.URL,
-		Timeout: 30 * time.Second,
-		Retries: 1,
+		BaseURL:   svc.URL,
+		Timeout:   30 * time.Second,
+		Retries:   1,
+		Transport: transport,
 	}), nil
 }
 
