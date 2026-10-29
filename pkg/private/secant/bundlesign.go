@@ -24,7 +24,6 @@ import (
 	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
 	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
-	cbundle "github.com/sigstore/cosign/v3/pkg/cosign/bundle"
 	"github.com/sigstore/cosign/v3/pkg/oci"
 	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	"github.com/sigstore/cosign/v3/pkg/oci/walk"
@@ -45,6 +44,7 @@ type BundleSigner struct {
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
 	keypair         sign.Keypair
+	transport       http.RoundTripper
 
 	mu      sync.Mutex
 	certPEM []byte            // Cached PEM-encoded Fulcio certificate
@@ -57,6 +57,7 @@ type BundleSignerOption func(*bundleSignerConfig)
 type bundleSignerConfig struct {
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
+	transport       http.RoundTripper
 }
 
 // WithSigningConfig overrides the SigningConfig that would otherwise be loaded
@@ -70,6 +71,14 @@ func WithSigningConfig(sc *root.SigningConfig) BundleSignerOption {
 // from the public TUF root. Primarily a test seam.
 func WithTrustedMaterial(tm root.TrustedMaterial) BundleSignerOption {
 	return func(c *bundleSignerConfig) { c.trustedMaterial = tm }
+}
+
+// WithTransport sets the transport for the Fulcio, timestamp authority and
+// Rekor v2 requests made while signing, in place of http.DefaultTransport.
+// Each request carries the context passed to the signing call, so a tracing
+// transport records it under the caller's span.
+func WithTransport(rt http.RoundTripper) BundleSignerOption {
+	return func(c *bundleSignerConfig) { c.transport = rt }
 }
 
 // NewBundleSigner loads SigningConfig and TrustedMaterial from TUF (unless
@@ -102,10 +111,11 @@ func NewBundleSigner(oidc fulcio.OIDCProvider, opts ...BundleSignerOption) (*Bun
 		signingConfig:   cfg.signingConfig,
 		trustedMaterial: cfg.trustedMaterial,
 		keypair:         keypair,
+		transport:       cfg.transport,
 	}, nil
 }
 
-// signWithIDToken signs content via cbundle.SignData using an OIDC token,
+// signWithIDToken signs content using an OIDC token,
 // which internally fetches a new Fulcio certificate. The cert is then
 // extracted from the resulting bundle and cached for future calls.
 // Must be called with bs.mu held.
@@ -115,7 +125,7 @@ func (bs *BundleSigner) signWithIDToken(ctx context.Context, content sign.Conten
 		return nil, fmt.Errorf("retrieving ID token: %w", err)
 	}
 
-	bundleBytes, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundleBytes, err := bs.signData(ctx, content, idToken, nil)
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
@@ -162,7 +172,7 @@ func (bs *BundleSigner) certNeedsRefresh() bool {
 
 // SignContent creates a protobuf bundle by signing the given content.
 // On first call (or when the cached cert is nearing expiry), delegates to
-// cbundle.SignData with an OIDC token, which fetches a new Fulcio cert
+// signData with an OIDC token, which fetches a new Fulcio cert
 // internally. The cert is extracted from the bundle and cached so that
 // subsequent calls pass it directly, skipping Fulcio entirely.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
@@ -199,7 +209,7 @@ func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) (
 	// Steady state: sign with the cached cert, skipping Fulcio. Safe to
 	// run unlocked because certPEM is a local copy and the keypair /
 	// signingConfig / trustedMaterial fields are immutable after init.
-	bundle, err := cbundle.SignData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundle, err := bs.signData(ctx, content, "", certPEM)
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
