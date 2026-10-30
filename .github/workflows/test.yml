@@ -24,6 +24,8 @@ jobs:
         terraform:
           - "1.14.*"
           - "1.15.*"
+          - "1.16.*"
+          - "1.17.*"
 
     # Fork PRs must wait for reviewer approval on the acceptance-tests
     # environment before the job runs: it executes the PR's code with an
