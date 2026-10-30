@@ -3,16 +3,12 @@ package secant
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
@@ -39,16 +35,18 @@ import (
 
 // BundleSigner holds the materials needed for the cosign v3 bundle signing path.
 // The ephemeral keypair is generated once and reused across all operations.
-// Fulcio certificates are cached and refreshed when nearing expiry.
+// Fulcio certificates come from a sign.CertificateProvider, by default a
+// fulcio.CachingCertProvider that caches them per OIDC identity until they
+// near expiry. Every sign asks the OIDC provider for a token, so a
+// BundleSigner whose provider returns tokens for different identities (e.g.
+// per-org scopes picked from the request context) always signs with a cert for
+// the current request's identity.
 type BundleSigner struct {
 	oidc            fulcio.OIDCProvider
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
 	keypair         sign.Keypair
-
-	mu      sync.Mutex
-	certPEM []byte            // Cached PEM-encoded Fulcio certificate
-	cert    *x509.Certificate // Parsed cert for expiry checking
+	certs           sign.CertificateProvider
 }
 
 // BundleSignerOption customizes a BundleSigner at construction.
@@ -57,6 +55,7 @@ type BundleSignerOption func(*bundleSignerConfig)
 type bundleSignerConfig struct {
 	signingConfig   *root.SigningConfig
 	trustedMaterial root.TrustedMaterial
+	certs           sign.CertificateProvider
 }
 
 // WithSigningConfig overrides the SigningConfig that would otherwise be loaded
@@ -70,6 +69,15 @@ func WithSigningConfig(sc *root.SigningConfig) BundleSignerOption {
 // from the public TUF root. Primarily a test seam.
 func WithTrustedMaterial(tm root.TrustedMaterial) BundleSignerOption {
 	return func(c *bundleSignerConfig) { c.trustedMaterial = tm }
+}
+
+// WithCertificateProvider overrides where signing certificates come from. It
+// is called on every sign with the BundleSigner's keypair and the current ID
+// token, so it must cache certificates itself and return one issued to that
+// token's identity. The default is a fulcio.CachingCertProvider over the
+// Fulcio instance in the SigningConfig.
+func WithCertificateProvider(p sign.CertificateProvider) BundleSignerOption {
+	return func(c *bundleSignerConfig) { c.certs = p }
 }
 
 // NewBundleSigner loads SigningConfig and TrustedMaterial from TUF (unless
@@ -93,6 +101,13 @@ func NewBundleSigner(oidc fulcio.OIDCProvider, opts ...BundleSignerOption) (*Bun
 		}
 		cfg.trustedMaterial = tr
 	}
+	if cfg.certs == nil {
+		inner, err := fulcio.NewCertProvider(cfg.signingConfig)
+		if err != nil {
+			return nil, fmt.Errorf("creating fulcio client: %w", err)
+		}
+		cfg.certs = fulcio.NewCachingCertProvider(inner)
+	}
 	keypair, err := sign.NewEphemeralKeypair(nil)
 	if err != nil {
 		return nil, fmt.Errorf("generating ephemeral keypair: %w", err)
@@ -102,104 +117,32 @@ func NewBundleSigner(oidc fulcio.OIDCProvider, opts ...BundleSignerOption) (*Bun
 		signingConfig:   cfg.signingConfig,
 		trustedMaterial: cfg.trustedMaterial,
 		keypair:         keypair,
+		certs:           cfg.certs,
 	}, nil
 }
 
-// signWithIDToken signs content via cbundle.SignData using an OIDC token,
-// which internally fetches a new Fulcio certificate. The cert is then
-// extracted from the resulting bundle and cached for future calls.
-// Must be called with bs.mu held.
-func (bs *BundleSigner) signWithIDToken(ctx context.Context, content sign.Content) ([]byte, error) {
-	idToken, err := bs.oidc.Provide(ctx, "sigstore")
-	if err != nil {
-		return nil, fmt.Errorf("retrieving ID token: %w", err)
-	}
-
-	bundleBytes, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("signing bundle: %w", err)
-	}
-
-	if err := bs.cacheCertFromBundle(bundleBytes); err != nil {
-		return nil, fmt.Errorf("caching cert from bundle: %w", err)
-	}
-
-	return bundleBytes, nil
-}
-
-// cacheCertFromBundle extracts the signing certificate from a serialized
-// protobuf bundle and caches it for reuse on subsequent sign operations.
-func (bs *BundleSigner) cacheCertFromBundle(bundleBytes []byte) error {
-	var bundle protobundle.Bundle
-	if err := protojson.Unmarshal(bundleBytes, &bundle); err != nil {
-		return fmt.Errorf("unmarshaling bundle: %w", err)
-	}
-
-	cert := bundle.GetVerificationMaterial().GetCertificate()
-	if cert == nil {
-		return fmt.Errorf("bundle contains no certificate")
-	}
-	derBytes := cert.GetRawBytes()
-
-	parsed, err := x509.ParseCertificate(derBytes)
-	if err != nil {
-		return fmt.Errorf("parsing certificate from bundle: %w", err)
-	}
-
-	bs.certPEM = pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: derBytes,
-	})
-	bs.cert = parsed
-	return nil
-}
-
-// certNeedsRefresh reports whether the cached cert is missing or nearing
-// expiry (within 30 seconds, matching the legacy fulcio path).
-func (bs *BundleSigner) certNeedsRefresh() bool {
-	return bs.cert == nil || time.Now().Add(30*time.Second).After(bs.cert.NotAfter)
-}
-
-// SignContent creates a protobuf bundle by signing the given content.
-// On first call (or when the cached cert is nearing expiry), delegates to
-// cbundle.SignData with an OIDC token, which fetches a new Fulcio cert
-// internally. The cert is extracted from the bundle and cached so that
-// subsequent calls pass it directly, skipping Fulcio entirely.
+// SignContent creates a protobuf bundle by signing the given content with a
+// certificate for the identity of the OIDC provider's current token. The
+// certificate provider caches certificates, so steady-state signs skip Fulcio.
 func (bs *BundleSigner) SignContent(ctx context.Context, content sign.Content) ([]byte, error) {
 	// Every SignContent ends in one transparency-log upload, and the
 	// Rekor v2 write client does not retry a 429 — gate it through the
-	// same limiter as the legacy paths. Wait before taking the mutex so
-	// a throttled caller doesn't block concurrent cached-cert signs.
+	// same limiter as the legacy paths.
 	if RekorRateLimiter != nil {
 		if err := RekorRateLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("waiting for rekor rate limiter: %w", err)
 		}
 	}
 
-	// Lock scope is deliberately split: we hold the mutex across a cert
-	// refresh so concurrent callers coalesce onto a single Fulcio fetch,
-	// but release it before the steady-state sign so cached-cert signs
-	// run in parallel.
-	bs.mu.Lock()
-
-	if bs.certNeedsRefresh() {
-		// Refresh path: keep the lock held through signWithIDToken so
-		// other goroutines observing certNeedsRefresh() block here
-		// instead of each issuing their own OIDC + Fulcio round-trip.
-		bundleBytes, err := bs.signWithIDToken(ctx, content)
-		bs.mu.Unlock()
-		return bundleBytes, err
+	// The provider may return tokens for different identities depending on
+	// ctx, so the token is fetched per call. Providers cache their tokens,
+	// so this is cheap.
+	idToken, err := bs.oidc.Provide(ctx, "sigstore")
+	if err != nil {
+		return nil, fmt.Errorf("retrieving ID token: %w", err)
 	}
 
-	// Snapshot the cached PEM under the lock so a concurrent refresh
-	// can't swap bs.certPEM out from under us mid-sign.
-	certPEM := bs.certPEM
-	bs.mu.Unlock()
-
-	// Steady state: sign with the cached cert, skipping Fulcio. Safe to
-	// run unlocked because certPEM is a local copy and the keypair /
-	// signingConfig / trustedMaterial fields are immutable after init.
-	bundle, err := cbundle.SignData(ctx, content, bs.keypair, "", certPEM, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{})
+	bundle, err := cbundle.SignData(ctx, content, bs.keypair, idToken, nil, nil, bs.signingConfig, bs.trustedMaterial, cbundle.SignOptions{CertificateProvider: bs.certs})
 	if err != nil {
 		return nil, fmt.Errorf("signing bundle: %w", err)
 	}
