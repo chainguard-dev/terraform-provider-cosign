@@ -42,6 +42,11 @@ func NewCertProvider(sc *root.SigningConfig) (sign.CertificateProvider, error) {
 // to use for callers that sign as many identities, and to share across
 // keypairs. Concurrent requests for one identity and key coalesce onto a
 // single fetch, without blocking requests for others.
+//
+// The identity is read from the token without verifying it, and a cache hit
+// returns a certificate without Fulcio seeing the token. CachingCertProvider
+// therefore trusts its caller to pass tokens from a trusted, in-process OIDC
+// provider, as BundleSigner does; don't pass it tokens from untrusted callers.
 type CachingCertProvider struct {
 	inner sign.CertificateProvider
 
