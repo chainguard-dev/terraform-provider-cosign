@@ -15,7 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/sigstore/cosign/v3/cmd/cosign/cli/copy"
+	cosigncopy "github.com/sigstore/cosign/v3/cmd/cosign/cli/copy"
 	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 )
 
@@ -110,7 +110,7 @@ func (r *CopyResource) doCopy(ctx context.Context, data *CopyResourceModel) (str
 	}
 
 	dstDig := dst.Digest(digest.DigestStr()).String()
-	if err := copy.CopyCmd(ctx, ropts, digest.String(), dstDig, false /* sigOnly */, true /* force */, []string{"sig", "sbom", "att"}, "" /* platform */); err != nil {
+	if err := cosigncopy.CopyCmd(ctx, ropts, digest.String(), dstDig, false /* sigOnly */, true /* force */, []string{"sig", "sbom", "att"}, "" /* platform */); err != nil {
 		return "", fmt.Errorf("unable to copy image: %w", err)
 	}
 	return dstDig, nil
