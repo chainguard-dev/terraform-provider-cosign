@@ -1,0 +1,96 @@
+# Copyright 2026 Chainguard, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# The keyless acceptance tests (sign, attest, copy), signing against a
+# Sigstore stack in k3s as one of its service accounts.
+version: 1
+
+checks:
+  keyless:
+    description: >-
+      Installs sigstore/helm-charts' scaffold chart (Fulcio, Rekor, Trillian,
+      a CT log, a TSA and TUF) into k3s, then runs the sign, attest and copy
+      acceptance tests against it with a service account token as the OIDC
+      identity.
+    environment:
+      packages:
+        - go-1.27~1.27
+        - bash
+        - coreutils
+        - curl
+        - git
+        - grep
+        - helm-4
+        - terraform-1.17~1.17
+      services: [k3s]
+      vars:
+        GOTOOLCHAIN: local
+        GOTMPDIR: /var/tmp
+        CHECKPOINT_DISABLE: "1"
+        TF_ACC: "1"
+    trigger: [presubmit, postsubmit]
+    resources: medium-amd64
+    timeout: 30m
+    network:
+      egress:
+        # go test -c
+        - proxy.golang.org
+        - storage.googleapis.com
+        # The chart
+        - sigstore.github.io
+        - github.com
+        - release-assets.githubusercontent.com
+        # The chart's images, and k3s's
+        - ghcr.io
+        - pkg-containers.githubusercontent.com
+        - gcr.io
+        - registry-1.docker.io
+        - auth.docker.io
+        - production.cloudfront.docker.com
+    shell: bash
+    script: |
+      set -euo pipefail
+
+      # On failure, show what the cluster was doing: the check's log
+      # otherwise only carries k3s's own output.
+      diagnose() {
+        kubectl get pods -A -o wide || true
+        kubectl get events -A --sort-by=.lastTimestamp | tail -40 || true
+        kubectl get pods -A --no-headers | awk '$4 != "Running" && $4 != "Completed" {print $1, $2}' |
+          while read -r ns pod; do
+            echo "=== $ns/$pod"
+            kubectl -n "$ns" describe pod "$pod" | sed -n '/^Containers:/,/^Conditions:/p' || true
+            kubectl -n "$ns" logs "$pod" --all-containers --previous --tail=40 ||
+              kubectl -n "$ns" logs "$pod" --all-containers --tail=40 || true
+          done
+        echo "=== fulcio-server"
+        kubectl -n fulcio-system logs deploy/fulcio-server --tail=40 || true
+      }
+      trap diagnose ERR
+
+      # TUF serves the instance's keys, as policy-controller reads Fulcio's
+      # roots from nowhere else. The job copying the keys there waits for the
+      # TSA, which signs with an ephemeral key as in the TSA chart's own CI.
+      helm install scaffold scaffold \
+        --repo https://sigstore.github.io/helm-charts --version 0.6.118 \
+        --set tuf.enabled=true,copySecretJob.enabled=true \
+        --set tsa.enabled=true,tsa.server.args.signer=memory \
+        --wait --wait-for-jobs --timeout 10m
+      kubectl -n tuf-system get secret tuf-root -o jsonpath='{.data.root}' | base64 -d > /var/tmp/tuf-root.json
+      export TEST_TUF_MIRROR=http://tuf-server.tuf-system
+      export TEST_TUF_ROOT=/var/tmp/tuf-root.json
+      export TUF_ROOT=/var/tmp/tuf
+
+      # The guest is the cluster's node, so service addresses route from it
+      # already: give it their names too, as pods resolve them.
+      kubectl get svc -A --no-headers -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,IP:.spec.clusterIP |
+        awk '$3 != "None" {print $3, $2"."$1, $2"."$1".svc", $2"."$1".svc.cluster.local"}' >> /etc/hosts
+
+      export TEST_FULCIO_URL=http://fulcio-server.fulcio-system
+      export TEST_REKOR_URL=http://rekor-server.rekor-system
+      export TEST_OIDC_ISSUER=https://kubernetes.default.svc
+      export TEST_OIDC_SUBJECT=https://kubernetes.io/namespaces/default/serviceaccounts/default
+      SIGSTORE_ID_TOKEN=$(kubectl create token default --audience sigstore --duration 1h)
+      export SIGSTORE_ID_TOKEN
+
+      go test -v -run 'TestAccResourceCosign(Sign|Attest|Copy)' ./internal/provider/

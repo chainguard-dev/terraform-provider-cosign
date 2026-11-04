@@ -1,0 +1,12 @@
+# Copyright 2026 Chainguard, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# A single-node k3s cluster, from mono's ai-cicd/sandbox/services/examples/k3s
+# with the service account issuer Fulcio's chart trusts (see k3s.sh).
+version: 1
+name: k3s
+packages: [busybox, k3s, iptables, 'containerd-shim-runc-v2~2.2']
+cmd: [sh, ./k3s.sh]
+timeout: 5m
+exports:
+  KUBECONFIG: /etc/rancher/k3s/k3s.yaml
