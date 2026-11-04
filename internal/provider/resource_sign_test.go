@@ -2,7 +2,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -16,9 +15,7 @@ import (
 )
 
 func TestAccResourceCosignSign(t *testing.T) {
-	if _, ok := os.LookupEnv("ACTIONS_ID_TOKEN_REQUEST_URL"); !ok {
-		t.Skip("Unable to keylessly sign without an actions token")
-	}
+	keyless := testKeyless(t)
 
 	repo, cleanup := ocitesting.SetupRepository(t, "test")
 	defer cleanup()
@@ -71,8 +68,11 @@ func TestAccResourceCosignSign(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Sign and verify the first image.
 			{
-				Config: fmt.Sprintf(`
+				ConfigVariables: keyless,
+				Config: keylessVariables + fmt.Sprintf(`
 resource "cosign_sign" "foo" {
+  fulcio_url = var.fulcio_url
+  rekor_url  = var.rekor_url
   image = %q
 }
 
@@ -90,14 +90,14 @@ data "cosign_verify" "bar" {
       }]
       authorities = [{
         keyless = {
-          url = "https://fulcio.sigstore.dev"
+          url = var.fulcio_url
           identities = [{
-            issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            issuer  = var.issuer
+            subject = var.subject
           }]
         }
         ctlog = {
-          url = "https://rekor.sigstore.dev"
+          url = var.rekor_url
         }
       }]
     }
@@ -118,6 +118,7 @@ data "cosign_verify" "bar" {
 			// Verify import works for the sign resource.
 			// conflict, fulcio_url, rekor_url cannot be reconstructed from import.
 			{
+				ConfigVariables:         keyless,
 				ResourceName:            "cosign_sign.foo",
 				ImportState:             true,
 				ImportStateVerify:       true,
@@ -126,8 +127,11 @@ data "cosign_verify" "bar" {
 
 			// Update the sign resource to sign the second image, and verify that.
 			{
-				Config: fmt.Sprintf(`
+				ConfigVariables: keyless,
+				Config: keylessVariables + fmt.Sprintf(`
 resource "cosign_sign" "foo" {
+  fulcio_url = var.fulcio_url
+  rekor_url  = var.rekor_url
   image = %q
 }
 
@@ -145,14 +149,14 @@ data "cosign_verify" "bar" {
       }]
       authorities = [{
         keyless = {
-          url = "https://fulcio.sigstore.dev"
+          url = var.fulcio_url
           identities = [{
-            issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            issuer  = var.issuer
+            subject = var.subject
           }]
         }
         ctlog = {
-          url = "https://rekor.sigstore.dev"
+          url = var.rekor_url
         }
       }]
     }
@@ -174,9 +178,7 @@ data "cosign_verify" "bar" {
 }
 
 func TestAccResourceCosignSignConflict(t *testing.T) {
-	if _, ok := os.LookupEnv("ACTIONS_ID_TOKEN_REQUEST_URL"); !ok {
-		t.Skip("Unable to keylessly sign without an actions token")
-	}
+	keyless := testKeyless(t)
 
 	repo, cleanup := ocitesting.SetupRepository(t, "test")
 	defer cleanup()
@@ -225,8 +227,11 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
 				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				Steps: []resource.TestStep{
 					{
-						Config: fmt.Sprintf(`
+						ConfigVariables: keyless,
+						Config: keylessVariables + fmt.Sprintf(`
 		resource "cosign_sign" "foo" {
+		  fulcio_url = var.fulcio_url
+		  rekor_url  = var.rekor_url
   		image = %q
 
   		conflict = %q
@@ -246,14 +251,14 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
       		}]
       		authorities = [{
         		keyless = {
-          		url = "https://fulcio.sigstore.dev"
+          		url = var.fulcio_url
           		identities = [{
-            		issuer  = "https://token.actions.githubusercontent.com"
-            		subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            		issuer  = var.issuer
+            		subject = var.subject
           		}]
         		}
         		ctlog = {
-          		url = "https://rekor.sigstore.dev"
+          		url = var.rekor_url
         		}
       		}]
     		}

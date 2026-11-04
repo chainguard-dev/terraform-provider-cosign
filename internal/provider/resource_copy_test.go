@@ -2,7 +2,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	ocitesting "github.com/chainguard-dev/terraform-provider-oci/testing"
@@ -13,9 +12,7 @@ import (
 )
 
 func TestAccResourceCosignCopy(t *testing.T) {
-	if _, ok := os.LookupEnv("ACTIONS_ID_TOKEN_REQUEST_URL"); !ok {
-		t.Skip("Unable to keylessly sign without an actions token")
-	}
+	keyless := testKeyless(t)
 
 	src, cleanup := ocitesting.SetupRepository(t, "src")
 	defer cleanup()
@@ -44,12 +41,17 @@ func TestAccResourceCosignCopy(t *testing.T) {
 		CheckDestroy: func(*terraform.State) error { return nil },
 		Steps: []resource.TestStep{{
 			// Sign and copy the image, then verify the copy's signature.
-			Config: fmt.Sprintf(`
+			ConfigVariables: keyless,
+			Config: keylessVariables + fmt.Sprintf(`
 resource "cosign_sign" "foo" {
+  fulcio_url = var.fulcio_url
+  rekor_url  = var.rekor_url
   image = %q
 }
 
 resource "cosign_attest" "foo" {
+  fulcio_url = var.fulcio_url
+  rekor_url  = var.rekor_url
   image          = cosign_sign.foo.signed_ref
   predicate_type = "https://predicate.type"
   predicate      = jsonencode({
@@ -76,10 +78,10 @@ data "cosign_verify" "copy" {
       }]
       authorities = [{
         keyless = {
-          url = "https://fulcio.sigstore.dev"
+          url = var.fulcio_url
           identities = [{
-            issuer  = "https://token.actions.githubusercontent.com"
-            subject = "https://github.com/chainguard-dev/terraform-provider-cosign/.github/workflows/test.yml@refs/heads/main"
+            issuer  = var.issuer
+            subject = var.subject
           }]
         }
         attestations = [{
@@ -97,7 +99,7 @@ data "cosign_verify" "copy" {
           }
         }]
         ctlog = {
-          url = "https://rekor.sigstore.dev"
+          url = var.rekor_url
         }
       }]
     }
@@ -113,6 +115,7 @@ data "cosign_verify" "copy" {
 		}, {
 			// Verify import works for the copy resource.
 			// source and destination cannot be reconstructed from import.
+			ConfigVariables:         keyless,
 			ResourceName:            "cosign_copy.copy",
 			ImportState:             true,
 			ImportStateVerify:       true,
