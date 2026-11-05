@@ -44,9 +44,13 @@ checks:
         - ghcr.io
         - pkg-containers.githubusercontent.com
         - gcr.io
+        # Docker Hub. Pulls from AWS us-east-1 get redirected to the S3
+        # bucket, not CloudFront.
         - registry-1.docker.io
+        - index.docker.io
         - auth.docker.io
         - production.cloudfront.docker.com
+        - docker-images-prod.s3.dualstack.us-east-1.amazonaws.com
     shell: bash
     script: |
       set -euo pipefail
