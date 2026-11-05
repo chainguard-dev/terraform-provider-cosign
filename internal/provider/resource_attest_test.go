@@ -428,3 +428,118 @@ func countAttestations(t *testing.T, att v1.Image) int {
 
 	return len(layers)
 }
+
+// TestAccResourceCosignAttestBundle attests in the formats that write a
+// bundle, and verifies each kind of attestation the format writes.
+func TestAccResourceCosignAttestBundle(t *testing.T) {
+	keyless := testKeyless(t)
+
+	repo, cleanup := ocitesting.SetupRepository(t, "test")
+	defer cleanup()
+
+	for _, tc := range []struct {
+		format string
+		verify []string
+	}{{
+		format: signatureFormatBundle,
+		verify: []string{signatureFormatBundle},
+	}, {
+		format: signatureFormatBoth,
+		verify: []string{signatureFormatLegacy, signatureFormatBundle},
+	}} {
+		t.Run(tc.format, func(t *testing.T) {
+			img, err := random.Image(1024, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dig, err := img.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := repo.Digest(dig.String())
+			if err := remote.Write(ref, img); err != nil {
+				t.Fatal(err)
+			}
+
+			url := "https://example.com/" + uuid.New().String()
+			value := uuid.New().String()
+
+			// One verify per kind of attestation, as a policy admits an image
+			// that satisfies any one of its authorities.
+			config := keylessVariables + fmt.Sprintf(`
+resource "cosign_attest" "foo" {
+  fulcio_url       = var.fulcio_url
+  rekor_url        = var.rekor_url
+  image            = %q
+  signature_format = %q
+  predicates {
+    type = %q
+    json = jsonencode({
+      foo = %q
+    })
+  }
+}
+`, ref, tc.format, url, value)
+			var checks []resource.TestCheckFunc
+			for _, format := range tc.verify {
+				config += fmt.Sprintf(`
+data "cosign_verify" %q {
+  image  = cosign_attest.foo.attested_ref
+  policy = jsonencode({
+    apiVersion = "policy.sigstore.dev/v1beta1"
+    kind       = "ClusterImagePolicy"
+    metadata = {
+      name = "attested-it"
+    }
+    spec = {
+      images = [{
+        glob = %q
+      }]
+      authorities = [{
+        signatureFormat = %q
+        keyless = {
+          url = var.fulcio_url
+          identities = [{
+            issuer  = var.issuer
+            subject = var.subject
+          }]
+        }
+        attestations = [{
+          name = "must-have-attestation"
+          predicateType = %q
+          policy = {
+            type = "cue"
+            data = <<EOF
+              predicateType: %q
+              predicate: {
+                foo: %q
+              }
+            EOF
+          }
+        }]
+        ctlog = {
+          url = var.rekor_url
+        }
+      }]
+    }
+  })
+}
+`, format, ref, format, url, url, value)
+				checks = append(checks, resource.TestMatchResourceAttr(
+					"data.cosign_verify."+format, "verified_ref", regexp.MustCompile("^"+ref.String())))
+			}
+
+			resource.Test(t, resource.TestCase{
+				PreCheck:                 func() { testAccPreCheck(t) },
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				// Attestations persist in the registry after destroy (by design).
+				CheckDestroy: func(*terraform.State) error { return nil },
+				Steps: []resource.TestStep{{
+					ConfigVariables: keyless,
+					Config:          config,
+					Check:           resource.ComposeTestCheckFunc(checks...),
+				}},
+			})
+		})
+	}
+}

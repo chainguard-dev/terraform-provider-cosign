@@ -84,6 +84,10 @@ checks:
       export TEST_TUF_MIRROR=http://tuf-server.tuf-system
       export TEST_TUF_ROOT=/var/tmp/tuf-root.json
       export TUF_ROOT=/var/tmp/tuf
+      # The bundle path reads the trusted root through sigstore-go, which
+      # takes the mirror from what TestMain writes under TUF_ROOT but the
+      # initial root.json only from here.
+      export TUF_ROOT_JSON=$TEST_TUF_ROOT
 
       # The guest is the cluster's node, so service addresses route from it
       # already: give it their names too, as pods resolve them.
