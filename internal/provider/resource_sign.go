@@ -83,14 +83,14 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Computed:            true,
 			},
 			"fulcio_url": schema.StringAttribute{
-				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev). Only honored when signature_format is 'legacy'.",
+				MarkdownDescription: "Address of sigstore PKI server (default https://fulcio.sigstore.dev). For 'bundle' signing, a non-default fulcio_url or rekor_url signs against Fulcio and Rekor v1 at these addresses instead of the TUF-configured endpoints (the trusted root still comes from TUF), and cannot be combined with the provider's use_rekor_v2.",
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString(defaultFulcioURL),
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"rekor_url": schema.StringAttribute{
-				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev). Only honored when signature_format is 'legacy'.",
+				MarkdownDescription: "Address of rekor transparency log server (default https://rekor.sigstore.dev). See fulcio_url for how it applies to 'bundle' signing.",
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString(defaultRekorURL),
@@ -144,7 +144,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		sigFmt = data.SignatureFormat.ValueString()
 	}
 
-	if err := validateBundleURLs(sigFmt, data.FulcioURL.ValueString(), data.RekorURL.ValueString()); err != nil {
+	if err := validateBundleURLs(sigFmt, data.FulcioURL.ValueString(), data.RekorURL.ValueString(), r.popts.useRekorV2); err != nil {
 		return "", nil, err
 	}
 
@@ -162,7 +162,7 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		}
 	}
 	if shouldPerformBundle(sigFmt) {
-		bundleSigner, err := r.popts.getBundleSigner()
+		bundleSigner, err := r.popts.getBundleSigner(data.FulcioURL.ValueString(), data.RekorURL.ValueString())
 		if err != nil {
 			return "", nil, fmt.Errorf("loading bundle signer: %w", err)
 		}

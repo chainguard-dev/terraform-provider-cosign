@@ -23,7 +23,9 @@ import (
 	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
 	"github.com/sigstore/fulcio/pkg/api"
+	prototrustroot "github.com/sigstore/protobuf-specs/gen/pb-go/trustroot/v1"
 	"github.com/sigstore/rekor/pkg/generated/client"
+	"github.com/sigstore/sigstore-go/pkg/root"
 )
 
 // Environment variable that, when set, skips attesting/signing altogether
@@ -37,28 +39,46 @@ const (
 	signatureFormatBoth   = "both"
 )
 
-// Default Sigstore public-good endpoints. The legacy signing path honors
-// fulcio_url and rekor_url overrides, but the bundle path loads its
-// endpoints from the TUF-configured SigningConfig — overrides there would
-// silently do nothing, so non-default values are rejected in bundle mode.
+// Default Sigstore public-good endpoints. With these, the bundle path loads
+// its endpoints from the TUF-configured SigningConfig. Any other value makes
+// it sign against the given Fulcio and Rekor v1 instead (see
+// bundleSigningConfig).
 const (
 	defaultFulcioURL = "https://fulcio.sigstore.dev"
 	defaultRekorURL  = "https://rekor.sigstore.dev"
 )
 
-// validateBundleURLs reports an error if signature_format includes bundle
-// and fulcio_url or rekor_url is set to a non-default value.
-func validateBundleURLs(sigFmt, fulcioURL, rekorURL string) error {
-	if !shouldPerformBundle(sigFmt) {
+// validateBundleURLs reports an error if signature_format includes bundle,
+// use_rekor_v2 is set and fulcio_url or rekor_url is set to a non-default
+// value: use_rekor_v2 loads its endpoints from TUF, so the overrides would
+// silently do nothing.
+func validateBundleURLs(sigFmt, fulcioURL, rekorURL string, useRekorV2 bool) error {
+	if !shouldPerformBundle(sigFmt) || !useRekorV2 {
 		return nil
 	}
-	if fulcioURL != "" && fulcioURL != defaultFulcioURL {
-		return fmt.Errorf("fulcio_url must be unset or %q when signature_format is %q or %q (bundle mode uses TUF-configured endpoints)", defaultFulcioURL, signatureFormatBundle, signatureFormatBoth)
-	}
-	if rekorURL != "" && rekorURL != defaultRekorURL {
-		return fmt.Errorf("rekor_url must be unset or %q when signature_format is %q or %q (bundle mode uses TUF-configured endpoints)", defaultRekorURL, signatureFormatBundle, signatureFormatBoth)
+	if !isDefaultEndpoints(fulcioURL, rekorURL) {
+		return fmt.Errorf("fulcio_url and rekor_url must be unset or %q and %q when signature_format is %q or %q and use_rekor_v2 is set (it uses TUF-configured endpoints)", defaultFulcioURL, defaultRekorURL, signatureFormatBundle, signatureFormatBoth)
 	}
 	return nil
+}
+
+func isDefaultEndpoints(fulcioURL, rekorURL string) bool {
+	return (fulcioURL == "" || fulcioURL == defaultFulcioURL) && (rekorURL == "" || rekorURL == defaultRekorURL)
+}
+
+// bundleSigningConfig returns a SigningConfig that signs against the given
+// Fulcio (API v1) and Rekor (API v1) instances, without a timestamp
+// authority: Rekor v1 entries carry an integrated time, which is what
+// verification checks the short-lived certificate against.
+func bundleSigningConfig(fulcioURL, rekorURL string) (*root.SigningConfig, error) {
+	return root.NewSigningConfig(root.SigningConfigMediaType02,
+		[]root.Service{{URL: fulcioURL, MajorAPIVersion: 1}},
+		nil,
+		[]root.Service{{URL: rekorURL, MajorAPIVersion: 1}},
+		root.ServiceConfiguration{Selector: prototrustroot.ServiceSelector_ANY},
+		nil,
+		root.ServiceConfiguration{Selector: prototrustroot.ServiceSelector_ANY},
+	)
 }
 
 // Ensure Provider satisfies various provider interfaces.
@@ -94,10 +114,15 @@ type ProviderOpts struct {
 	// Keyed off rekor URL.
 	rekorClients map[string]*client.Rekor
 
-	// Lazily initialized bundle signer for the "bundle" signing path.
-	// Cached at the provider level so that the ephemeral keypair and Fulcio cert
-	// are generated at most once across all sign/attest resource operations.
-	bs *secant.BundleSigner
+	// Lazily initialized bundle signers for the "bundle" signing path, keyed
+	// off fulcio and rekor URL. Cached at the provider level so that the
+	// ephemeral keypair and Fulcio cert are generated at most once per
+	// instance across all sign/attest resource operations.
+	bundleSigners map[bundleEndpoints]*secant.BundleSigner
+}
+
+type bundleEndpoints struct {
+	fulcioURL, rekorURL string
 }
 
 func (p *ProviderOpts) rekorClient(rekorUrl string) (*client.Rekor, error) {
@@ -139,30 +164,41 @@ func (p *ProviderOpts) signerVerifier(fulcioUrl string) (*fulcio.SignerVerifier,
 	return sv, nil
 }
 
-func (p *ProviderOpts) getBundleSigner() (*secant.BundleSigner, error) {
+func (p *ProviderOpts) getBundleSigner(fulcioURL, rekorURL string) (*secant.BundleSigner, error) {
 	p.Lock()
 	defer p.Unlock()
 
-	var err error
-	if p.bs == nil {
-		// When use_rekor_v2 is set, drive the bundle path at a Rekor v2
-		// instance by loading the Rekor v2 SigningConfig from TUF and feeding
-		// it through the WithSigningConfig seam instead of the default config.
-		var opts []secant.BundleSignerOption
-		if p.useRekorV2 {
-			sc, scErr := cosign.SigningConfigRekorV2()
-			if scErr != nil {
-				return nil, fmt.Errorf("loading rekor v2 signing config: %w", scErr)
-			}
-			opts = append(opts, secant.WithSigningConfig(sc))
-		}
-		p.bs, err = secant.NewBundleSigner(p.oidc, opts...)
-		if err != nil {
-			return nil, err
-		}
+	key := bundleEndpoints{fulcioURL, rekorURL}
+	if bs, ok := p.bundleSigners[key]; ok {
+		return bs, nil
 	}
 
-	return p.bs, nil
+	// Sign against non-default endpoints with a SigningConfig built from
+	// them. When use_rekor_v2 is set, drive the bundle path at a Rekor v2
+	// instance by loading the Rekor v2 SigningConfig from TUF. Either is fed
+	// through the WithSigningConfig seam instead of the default config.
+	var opts []secant.BundleSignerOption
+	switch {
+	case !isDefaultEndpoints(fulcioURL, rekorURL):
+		sc, err := bundleSigningConfig(fulcioURL, rekorURL)
+		if err != nil {
+			return nil, fmt.Errorf("building signing config: %w", err)
+		}
+		opts = append(opts, secant.WithSigningConfig(sc))
+	case p.useRekorV2:
+		sc, err := cosign.SigningConfigRekorV2()
+		if err != nil {
+			return nil, fmt.Errorf("loading rekor v2 signing config: %w", err)
+		}
+		opts = append(opts, secant.WithSigningConfig(sc))
+	}
+	bs, err := secant.NewBundleSigner(p.oidc, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	p.bundleSigners[key] = bs
+	return bs, nil
 }
 
 func (p *ProviderOpts) withContext(ctx context.Context) []remote.Option {
@@ -194,7 +230,7 @@ func (p *Provider) Schema(ctx context.Context, req provider.SchemaRequest, resp 
 				Validators:          []validator.String{DurationValidator{}},
 			},
 			"use_rekor_v2": schema.BoolAttribute{
-				MarkdownDescription: fmt.Sprintf("When true, the bundle signing path targets Rekor v2 by loading the Rekor v2 SigningConfig from TUF instead of the default. Only affects '%s' and '%s' signing; ignored for '%s'.",
+				MarkdownDescription: fmt.Sprintf("When true, the bundle signing path targets Rekor v2 by loading the Rekor v2 SigningConfig from TUF instead of the default. Only affects '%s' and '%s' signing; ignored for '%s'. Cannot be combined with a non-default fulcio_url or rekor_url on a resource.",
 					signatureFormatBundle, signatureFormatBoth, signatureFormatLegacy),
 				Optional: true,
 			},
@@ -262,6 +298,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		useRekorV2:                  useRekorV2,
 		signers:                     map[string]*fulcio.SignerVerifier{},
 		rekorClients:                map[string]*client.Rekor{},
+		bundleSigners:               map[bundleEndpoints]*secant.BundleSigner{},
 	}
 
 	// Make provider opts available to resources and data sources.

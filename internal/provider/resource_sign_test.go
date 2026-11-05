@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	ctypes "github.com/sigstore/cosign/v3/pkg/types"
 )
 
 func TestAccResourceCosignSign(t *testing.T) {
@@ -305,6 +306,109 @@ func TestAccResourceCosignSignConflict(t *testing.T) {
 			}
 
 			prevDigest = nextDigest
+		})
+	}
+}
+
+// TestAccResourceCosignSignBundle signs in the formats that write a bundle,
+// and verifies each kind of signature the format writes.
+func TestAccResourceCosignSignBundle(t *testing.T) {
+	keyless := testKeyless(t)
+
+	repo, cleanup := ocitesting.SetupRepository(t, "test")
+	defer cleanup()
+
+	for _, tc := range []struct {
+		format string
+		verify []string
+	}{{
+		format: signatureFormatBundle,
+		verify: []string{signatureFormatBundle},
+	}, {
+		format: signatureFormatBoth,
+		verify: []string{signatureFormatLegacy, signatureFormatBundle},
+	}} {
+		t.Run(tc.format, func(t *testing.T) {
+			img, err := random.Image(1024, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dig, err := img.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := repo.Digest(dig.String())
+			if err := remote.Write(ref, img); err != nil {
+				t.Fatal(err)
+			}
+
+			// One verify per kind of signature, as a policy admits an image
+			// that satisfies any one of its authorities.
+			config := keylessVariables + fmt.Sprintf(`
+resource "cosign_sign" "foo" {
+  fulcio_url       = var.fulcio_url
+  rekor_url        = var.rekor_url
+  image            = %q
+  signature_format = %q
+}
+`, ref, tc.format)
+			var checks []resource.TestCheckFunc
+			for _, format := range tc.verify {
+				// policy-controller verifies bundles only as attestations, so
+				// check the bundle as one with the predicate type it signs.
+				attestations := "[]"
+				if format == signatureFormatBundle {
+					attestations = fmt.Sprintf(`[{
+          name          = "must-have-signature"
+          predicateType = %q
+        }]`, ctypes.CosignSignPredicateType)
+				}
+				config += fmt.Sprintf(`
+data "cosign_verify" %q {
+  image  = cosign_sign.foo.signed_ref
+  policy = jsonencode({
+    apiVersion = "policy.sigstore.dev/v1beta1"
+    kind       = "ClusterImagePolicy"
+    metadata = {
+      name = "signed-it"
+    }
+    spec = {
+      images = [{
+        glob = %q
+      }]
+      authorities = [{
+        signatureFormat = %q
+        keyless = {
+          url = var.fulcio_url
+          identities = [{
+            issuer  = var.issuer
+            subject = var.subject
+          }]
+        }
+        attestations = %s
+        ctlog = {
+          url = var.rekor_url
+        }
+      }]
+    }
+  })
+}
+`, format, ref, format, attestations)
+				checks = append(checks, resource.TestMatchResourceAttr(
+					"data.cosign_verify."+format, "verified_ref", regexp.MustCompile("^"+ref.String())))
+			}
+
+			resource.Test(t, resource.TestCase{
+				PreCheck:                 func() { testAccPreCheck(t) },
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				// Signatures persist in the registry after destroy (by design).
+				CheckDestroy: func(*terraform.State) error { return nil },
+				Steps: []resource.TestStep{{
+					ConfigVariables: keyless,
+					Config:          config,
+					Check:           resource.ComposeTestCheckFunc(checks...),
+				}},
+			})
 		})
 	}
 }
