@@ -89,3 +89,31 @@ func TestSignatureFormatDescription(t *testing.T) {
 		t.Errorf("MarkdownDescription() = %q, want %q", mdDesc, desc)
 	}
 }
+
+func TestValidateBundleURLs(t *testing.T) {
+	const custom = "http://sigstore.example"
+	tests := []struct {
+		name       string
+		mode       string
+		fulcioURL  string
+		rekorURL   string
+		useRekorV2 bool
+		wantErr    bool
+	}{
+		{"bundle, defaults", signatureFormatBundle, defaultFulcioURL, defaultRekorURL, false, false},
+		{"bundle, custom fulcio", signatureFormatBundle, custom, defaultRekorURL, false, false},
+		{"both, custom rekor", signatureFormatBoth, defaultFulcioURL, custom, false, false},
+		{"bundle, rekor v2, defaults", signatureFormatBundle, defaultFulcioURL, defaultRekorURL, true, false},
+		{"bundle, rekor v2, custom fulcio", signatureFormatBundle, custom, defaultRekorURL, true, true},
+		{"both, rekor v2, custom rekor", signatureFormatBoth, defaultFulcioURL, custom, true, true},
+		{"legacy, rekor v2, custom", signatureFormatLegacy, custom, custom, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateBundleURLs(tc.mode, tc.fulcioURL, tc.rekorURL, tc.useRekorV2)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateBundleURLs() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
