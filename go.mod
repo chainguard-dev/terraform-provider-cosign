@@ -32,6 +32,8 @@ require (
 	github.com/sigstore/sigstore v1.11.3
 	github.com/sigstore/sigstore-go v1.4.0
 	github.com/transparency-dev/merkle v0.0.2
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0
+	go.opentelemetry.io/otel/sdk v1.47.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.25.0
 	golang.org/x/time v0.16.0
@@ -294,7 +296,6 @@ require (
 	go.abhg.dev/goldmark/frontmatter v0.2.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
