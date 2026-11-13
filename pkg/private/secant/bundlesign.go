@@ -121,6 +121,16 @@ func NewBundleSigner(oidc fulcio.OIDCProvider, opts ...BundleSignerOption) (*Bun
 	}, nil
 }
 
+// LegacySigner returns a legacy-format signer that shares this BundleSigner's
+// keypair, certificate provider and OIDC provider, so a caller signing both
+// formats gets one Fulcio certificate per identity and expiry window instead
+// of one per format. Its signatures carry the same certificate as this
+// BundleSigner's bundles, with the chain built from the BundleSigner's
+// TrustedMaterial (see fulcio.NewSharedSigner).
+func (bs *BundleSigner) LegacySigner() (*fulcio.SignerVerifier, error) {
+	return fulcio.NewSharedSigner(bs.oidc, bs.keypair, bs.certs, bs.trustedMaterial)
+}
+
 // SignContent creates a protobuf bundle by signing the given content with a
 // certificate for the identity of the OIDC provider's current token. The
 // certificate provider caches certificates, so steady-state signs skip Fulcio.
