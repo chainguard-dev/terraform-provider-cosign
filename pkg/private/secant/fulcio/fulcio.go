@@ -48,12 +48,17 @@ type SignerVerifier struct {
 	provider     OIDCProvider
 	fulcioClient api.LegacyClient
 
+	// shared, when set by NewSharedSigner, supplies certs in place of
+	// fulcioClient.
+	shared *sharedCerts
+
 	// Protects these fields from mutating from refresh().
 	sync.Mutex
-	cert    *x509.Certificate
-	certPEM []byte
-	chain   []byte
-	sct     []byte
+	cert      *x509.Certificate
+	certPEM   []byte
+	chain     []byte
+	sct       []byte
+	sharedDER []byte // the shared cert that certPEM and chain encode
 }
 
 // NewSigner returns a "keyless" fulcio signer.
@@ -140,6 +145,25 @@ func (sv *SignerVerifier) refresh(ctx context.Context) error {
 	return nil
 }
 
+// certChain returns the PEM-encoded certificate and chain to sign with.
+func (sv *SignerVerifier) certChain(ctx context.Context) ([]byte, []byte, error) {
+	if sv.shared != nil {
+		return sv.sharedCertChain(ctx)
+	}
+
+	sv.Lock()
+	defer sv.Unlock()
+
+	// If this is our first cert or the cert is expired, we need to hit fulcio.
+	// Add 30 seconds of buffer to account for clock skew (gitsign does the same).
+	if sv.cert == nil || time.Now().Add(time.Second*30).After(sv.cert.NotAfter) {
+		if err := sv.refresh(ctx); err != nil {
+			return nil, nil, fmt.Errorf("refreshing fulcio cert: %w", err)
+		}
+	}
+	return sv.certPEM, sv.chain, nil
+}
+
 func (sv *SignerVerifier) SignMessage(message io.Reader, opts ...signature.SignOption) ([]byte, error) {
 	return sv.inner.SignMessage(message, opts...)
 }
@@ -162,18 +186,12 @@ func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Si
 		return nil, err
 	}
 
-	sv.Lock()
-	defer sv.Unlock()
-
-	// If this is our first cert or the cert is expired, we need to hit fulcio.
-	// Add 30 seconds of buffer to account for clock skew (gitsign does the same).
-	if sv.cert == nil || time.Now().Add(time.Second*30).After(sv.cert.NotAfter) {
-		if err := sv.refresh(ctx); err != nil {
-			return nil, fmt.Errorf("refreshing fulcio cert: %w", err)
-		}
+	certPEM, chain, err := sv.certChain(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	sig, err := static.NewSignature(payloadBytes, base64.StdEncoding.EncodeToString(signed), static.WithCertChain(sv.certPEM, sv.chain))
+	sig, err := static.NewSignature(payloadBytes, base64.StdEncoding.EncodeToString(signed), static.WithCertChain(certPEM, chain))
 	if err != nil {
 		return nil, err
 	}
