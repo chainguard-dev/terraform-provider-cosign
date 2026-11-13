@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/sign"
@@ -98,7 +97,10 @@ func (s *sharedCerts) verify(der []byte) ([]byte, []byte, error) {
 	if err := cryptoutils.EqualKeys(cert.PublicKey, s.keypair.GetPublicKey()); err != nil {
 		return nil, nil, fmt.Errorf("cert does not bind the signing key: %w", err)
 	}
-	chains, err := verify.VerifyLeafCertificate(time.Now(), cert, s.trustedMaterial)
+	// Check the chain at issuance rather than now, so a signer whose clock
+	// runs behind Fulcio's doesn't reject a fresh cert as not yet valid.
+	// CachingCertProvider already retires certs nearing expiry.
+	chains, err := verify.VerifyLeafCertificate(cert.NotBefore, cert, s.trustedMaterial)
 	if err != nil {
 		return nil, nil, fmt.Errorf("verifying cert chain: %w", err)
 	}

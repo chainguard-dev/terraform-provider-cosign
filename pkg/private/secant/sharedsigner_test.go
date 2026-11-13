@@ -45,7 +45,8 @@ type testFulcio struct {
 	ctKey       *ecdsa.PrivateKey
 	trustedRoot *root.TrustedRoot
 	omitSCT     bool
-	otherKey    bool // issue certs for a key other than the requester's
+	otherKey    bool          // issue certs for a key other than the requester's
+	clockAhead  time.Duration // how far Fulcio's clock runs ahead of the signer's
 
 	mu      sync.Mutex
 	fetches int
@@ -130,8 +131,8 @@ func (f *testFulcio) GetCertificate(_ context.Context, keypair sign.Keypair, opt
 		SerialNumber:   big.NewInt(time.Now().UnixNano()),
 		Subject:        pkix.Name{CommonName: claims.Subject},
 		EmailAddresses: []string{"signer@example.com"},
-		NotBefore:      time.Now().Add(-time.Minute),
-		NotAfter:       time.Now().Add(10 * time.Minute),
+		NotBefore:      time.Now().Add(f.clockAhead - time.Minute),
+		NotAfter:       time.Now().Add(f.clockAhead + 10*time.Minute),
 		KeyUsage:       x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
 	}
@@ -423,5 +424,18 @@ func TestSharedSignersConcurrentIdentities(t *testing.T) {
 
 	if got := f.fetchCount(); got != len(subs) {
 		t.Errorf("Fulcio fetches = %d, want %d (one per identity)", got, len(subs))
+	}
+}
+
+// TestSharedSignerToleratesFulcioClockAhead signs with a cert that isn't
+// valid yet by the signer's clock, as when Fulcio's clock runs ahead.
+func TestSharedSignerToleratesFulcioClockAhead(t *testing.T) {
+	f := newTestFulcio(t)
+	f.clockAhead = 2 * time.Minute
+	_, legacy := newSharedSigners(t, f, f.trustedRoot)
+
+	ctx := context.WithValue(context.Background(), subjectCtxKey{}, "org-a/identity")
+	if _, err := legacy.Cosign(ctx, strings.NewReader("x")); err != nil {
+		t.Errorf("Cosign with a cert issued by a clock 2m ahead: %v", err)
 	}
 }
