@@ -95,6 +95,9 @@ func (s *sharedCerts) verify(der []byte) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing cert: %w", err)
 	}
+	if err := cryptoutils.EqualKeys(cert.PublicKey, s.keypair.GetPublicKey()); err != nil {
+		return nil, nil, fmt.Errorf("cert does not bind the signing key: %w", err)
+	}
 	chains, err := verify.VerifyLeafCertificate(time.Now(), cert, s.trustedMaterial)
 	if err != nil {
 		return nil, nil, fmt.Errorf("verifying cert chain: %w", err)

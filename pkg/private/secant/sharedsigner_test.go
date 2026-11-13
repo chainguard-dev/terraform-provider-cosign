@@ -45,6 +45,7 @@ type testFulcio struct {
 	ctKey       *ecdsa.PrivateKey
 	trustedRoot *root.TrustedRoot
 	omitSCT     bool
+	otherKey    bool // issue certs for a key other than the requester's
 
 	mu      sync.Mutex
 	fetches int
@@ -134,13 +135,17 @@ func (f *testFulcio) GetCertificate(_ context.Context, keypair sign.Keypair, opt
 		KeyUsage:       x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
 	}
+	pub := keypair.GetPublicKey()
+	if f.otherKey {
+		pub = &mustKey(f.t).PublicKey
+	}
 	if f.omitSCT {
-		return x509.CreateCertificate(rand.Reader, tmpl, f.inter, keypair.GetPublicKey(), f.interKey)
+		return x509.CreateCertificate(rand.Reader, tmpl, f.inter, pub, f.interKey)
 	}
 
 	// Sign an SCT over the precert, then issue the same cert with the SCT
 	// embedded; dropping the SCT extension gives back the precert's TBS.
-	precert := mustCert(f.t, tmpl, f.inter, keypair.GetPublicKey(), f.interKey)
+	precert := mustCert(f.t, tmpl, f.inter, pub, f.interKey)
 	sct := ct.SignedCertificateTimestamp{
 		SCTVersion: ct.V1,
 		LogID:      ct.LogID{KeyID: ctLogID(f.t, &f.ctKey.PublicKey)},
@@ -183,7 +188,7 @@ func (f *testFulcio) GetCertificate(_ context.Context, keypair sign.Keypair, opt
 		return nil, err
 	}
 	tmpl.ExtraExtensions = []pkix.Extension{{Id: asn1.ObjectIdentifier(ctx509.OIDExtensionCTSCT), Value: ext}}
-	return x509.CreateCertificate(rand.Reader, tmpl, f.inter, keypair.GetPublicKey(), f.interKey)
+	return x509.CreateCertificate(rand.Reader, tmpl, f.inter, pub, f.interKey)
 }
 
 func mustKey(t *testing.T) *ecdsa.PrivateKey {
@@ -338,5 +343,85 @@ func TestSharedSignerRequiresTrustedChain(t *testing.T) {
 	_, err := legacy.Cosign(ctx, strings.NewReader("x"))
 	if err == nil || !strings.Contains(err.Error(), "verifying cert chain") {
 		t.Errorf("Cosign with a cert from an untrusted CA: err = %v, want a chain verification error", err)
+	}
+}
+
+func TestSharedSignerRequiresCertForItsKey(t *testing.T) {
+	f := newTestFulcio(t)
+	f.otherKey = true
+	_, legacy := newSharedSigners(t, f, f.trustedRoot)
+
+	ctx := context.WithValue(context.Background(), subjectCtxKey{}, "org-a/identity")
+	_, err := legacy.Cosign(ctx, strings.NewReader("x"))
+	if err == nil || !strings.Contains(err.Error(), "does not bind the signing key") {
+		t.Errorf("Cosign with a cert for another key: err = %v, want a key mismatch error", err)
+	}
+}
+
+// TestSharedSignersConcurrentIdentities signs in both formats as several
+// identities at once and checks that every signature carries a cert for the
+// identity it was made as, so the shared cache and the legacy signer's chain
+// memo never hand one identity's cert to another.
+func TestSharedSignersConcurrentIdentities(t *testing.T) {
+	f := newTestFulcio(t)
+	bs, legacy := newSharedSigners(t, f, f.trustedRoot)
+
+	subs := []string{"org-a/identity", "org-b/identity", "org-c/identity"}
+	var wg sync.WaitGroup
+	for i := range 60 {
+		sub := subs[i%len(subs)]
+		wg.Go(func() {
+			ctx := context.WithValue(context.Background(), subjectCtxKey{}, sub)
+			sig, err := legacy.Cosign(ctx, strings.NewReader(sub))
+			if err != nil {
+				t.Errorf("Cosign as %s: %v", sub, err)
+				return
+			}
+			cert, err := sig.Cert()
+			if err != nil {
+				t.Errorf("legacy cert: %v", err)
+				return
+			}
+			if got := cert.Subject.CommonName; got != sub {
+				t.Errorf("legacy signed as %q with a cert for %q", sub, got)
+			}
+			ann, err := sig.Annotations()
+			if err != nil {
+				t.Errorf("legacy annotations: %v", err)
+				return
+			}
+			certPEM, err := cryptoutils.MarshalCertificateToPEM(cert)
+			if err != nil {
+				t.Errorf("marshaling cert: %v", err)
+				return
+			}
+			if ann[static.CertificateAnnotationKey] != string(certPEM) {
+				t.Errorf("as %s, the certificate annotation does not match the cert", sub)
+			}
+
+			bundleBytes, err := bs.SignContent(ctx, &sign.PlainData{Data: []byte(sub)})
+			if err != nil {
+				t.Errorf("SignContent as %s: %v", sub, err)
+				return
+			}
+			var b sgbundle.Bundle
+			if err := b.UnmarshalJSON(bundleBytes); err != nil {
+				t.Errorf("unmarshaling bundle: %v", err)
+				return
+			}
+			bundleCert, err := x509.ParseCertificate(b.GetVerificationMaterial().GetCertificate().GetRawBytes())
+			if err != nil {
+				t.Errorf("parsing bundle cert: %v", err)
+				return
+			}
+			if got := bundleCert.Subject.CommonName; got != sub {
+				t.Errorf("bundle signed as %q with a cert for %q", sub, got)
+			}
+		})
+	}
+	wg.Wait()
+
+	if got := f.fetchCount(); got != len(subs) {
+		t.Errorf("Fulcio fetches = %d, want %d (one per identity)", got, len(subs))
 	}
 }
