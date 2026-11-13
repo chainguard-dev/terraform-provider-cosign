@@ -54,11 +54,10 @@ type SignerVerifier struct {
 
 	// Protects these fields from mutating from refresh().
 	sync.Mutex
-	cert      *x509.Certificate
-	certPEM   []byte
-	chain     []byte
-	sct       []byte
-	sharedDER []byte // the shared cert that certPEM and chain encode
+	cert    *x509.Certificate
+	certPEM []byte
+	chain   []byte
+	sct     []byte
 }
 
 // NewSigner returns a "keyless" fulcio signer.

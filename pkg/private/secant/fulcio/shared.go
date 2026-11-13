@@ -1,13 +1,14 @@
 package fulcio
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"sync"
+	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/sign"
@@ -23,6 +24,15 @@ type sharedCerts struct {
 	keypair         sign.Keypair
 	certs           sign.CertificateProvider
 	trustedMaterial root.TrustedMaterial
+
+	mu       sync.Mutex
+	verified map[string]verifiedCert // keyed by DER
+}
+
+// verifiedCert is a cert that passed verify, PEM-encoded with its chain.
+type verifiedCert struct {
+	certPEM, chainPEM []byte
+	notAfter          time.Time
 }
 
 // NewSharedSigner returns a "keyless" legacy signer that signs with keypair
@@ -54,6 +64,7 @@ func NewSharedSigner(provider OIDCProvider, keypair sign.Keypair, certs sign.Cer
 			keypair:         keypair,
 			certs:           certs,
 			trustedMaterial: trustedMaterial,
+			verified:        map[string]verifiedCert{},
 		},
 	}, nil
 }
@@ -70,52 +81,72 @@ func (sv *SignerVerifier) sharedCertChain(ctx context.Context) ([]byte, []byte, 
 		return nil, nil, fmt.Errorf("retrieving cert: %w", err)
 	}
 
-	sv.Lock()
-	defer sv.Unlock()
+	return sv.shared.chain(der)
+}
 
-	// The provider returns the same cert until it nears expiry, so the chain
-	// and SCT are only checked when the cert changes.
-	if !bytes.Equal(der, sv.sharedDER) {
-		certPEM, chainPEM, err := sv.shared.verify(der)
-		if err != nil {
-			return nil, nil, err
-		}
-		sv.sharedDER, sv.certPEM, sv.chain = der, certPEM, chainPEM
+// chain returns the PEM-encoded cert and chain for der, verifying der the
+// first time it is seen. The provider returns the same cert per identity
+// until it nears expiry, so a signer that signs as many identities checks
+// each identity's chain and SCT once per cert rather than on every switch.
+func (s *sharedCerts) chain(der []byte) ([]byte, []byte, error) {
+	s.mu.Lock()
+	v, ok := s.verified[string(der)]
+	s.mu.Unlock()
+	if ok {
+		return v.certPEM, v.chainPEM, nil
 	}
-	return sv.certPEM, sv.chain, nil
+
+	// Verify without the lock so signs for other identities don't wait. Two
+	// callers that see a new cert at once both verify it, with one result.
+	v, err := s.verify(der)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Drop expired certs so the memo doesn't grow without bound.
+	now := time.Now()
+	for k, e := range s.verified {
+		if now.After(e.notAfter) {
+			delete(s.verified, k)
+		}
+	}
+	s.verified[string(der)] = v
+	return v.certPEM, v.chainPEM, nil
 }
 
 // verify chains a leaf certificate to a Fulcio CA in the trusted material and
 // checks its embedded SCT, as refresh does for certs from the legacy Fulcio
 // API. It returns the PEM-encoded leaf and the PEM-encoded chain above it
 // (intermediates, then root), which is what the legacy Fulcio API returns.
-func (s *sharedCerts) verify(der []byte) ([]byte, []byte, error) {
+func (s *sharedCerts) verify(der []byte) (verifiedCert, error) {
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing cert: %w", err)
+		return verifiedCert{}, fmt.Errorf("parsing cert: %w", err)
 	}
 	if err := cryptoutils.EqualKeys(cert.PublicKey, s.keypair.GetPublicKey()); err != nil {
-		return nil, nil, fmt.Errorf("cert does not bind the signing key: %w", err)
+		return verifiedCert{}, fmt.Errorf("cert does not bind the signing key: %w", err)
 	}
 	// Check the chain at issuance rather than now, so a signer whose clock
 	// runs behind Fulcio's doesn't reject a fresh cert as not yet valid.
 	// CachingCertProvider already retires certs nearing expiry.
 	chains, err := verify.VerifyLeafCertificate(cert.NotBefore, cert, s.trustedMaterial)
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifying cert chain: %w", err)
+		return verifiedCert{}, fmt.Errorf("verifying cert chain: %w", err)
 	}
 	if err := verify.VerifySignedCertificateTimestamp(chains, 1, s.trustedMaterial); err != nil {
-		return nil, nil, fmt.Errorf("verifying SCT: %w", err)
+		return verifiedCert{}, fmt.Errorf("verifying SCT: %w", err)
 	}
 	certPEM, err := cryptoutils.MarshalCertificateToPEM(cert)
 	if err != nil {
-		return nil, nil, err
+		return verifiedCert{}, err
 	}
 	chainPEM, err := cryptoutils.MarshalCertificatesToPEM(chains[0][1:])
 	if err != nil {
-		return nil, nil, err
+		return verifiedCert{}, err
 	}
-	return certPEM, chainPEM, nil
+	return verifiedCert{certPEM: certPEM, chainPEM: chainPEM, notAfter: cert.NotAfter}, nil
 }
 
 // keypairSignerVerifier is a signature.SignerVerifier over a sign.Keypair,
