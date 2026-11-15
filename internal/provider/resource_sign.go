@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -41,6 +42,7 @@ type SignResourceModel struct {
 	FulcioURL       types.String `tfsdk:"fulcio_url"`
 	RekorURL        types.String `tfsdk:"rekor_url"`
 	SignatureFormat types.String `tfsdk:"signature_format"`
+	Annotations     types.Map    `tfsdk:"annotations"`
 }
 
 func (r *SignResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -102,6 +104,13 @@ func (r *SignResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Validators:          []validator.String{SignatureFormatValidator{}},
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
+			"annotations": schema.MapAttribute{
+				MarkdownDescription: "Annotations to include in the signed payload, like the `-a key=value` flag of `cosign sign`. For 'legacy' signatures they are the payload's optional properties, which `cosign verify -a` checks; for 'bundle' signatures they are the annotations of the signed statement's subject. Changing them signs the image again.",
+				ElementType:         types.StringType,
+				Optional:            true,
+				Validators:          []validator.Map{AnnotationsValidator{}},
+				PlanModifiers:       []planmodifier.Map{mapplanmodifier.RequiresReplace()},
+			},
 		},
 	}
 }
@@ -136,8 +145,10 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 	ctx, cancel := context.WithTimeout(ctx, r.popts.timeout)
 	defer cancel()
 
-	// TODO: This should probably be configurable?
-	var annotations map[string]any = nil
+	annotations, err := signAnnotations(data.Annotations)
+	if err != nil {
+		return "", nil, err
+	}
 
 	sigFmt := r.popts.defaultSignatureFormat
 	if !data.SignatureFormat.IsNull() && !data.SignatureFormat.IsUnknown() {
@@ -171,6 +182,29 @@ func (r *SignResource) doSign(ctx context.Context, data *SignResourceModel) (str
 		}
 	}
 	return digest.String(), nil, nil
+}
+
+// signAnnotations converts the annotations attribute into the annotations
+// the signers put in the signed payload. It returns nil when there are none,
+// rather than an empty map: an empty map changes the legacy payload's
+// optional properties from null to {}, so SKIPSAME would no longer match
+// signatures written without annotations.
+func signAnnotations(m types.Map) (map[string]any, error) {
+	if m.IsNull() || m.IsUnknown() || len(m.Elements()) == 0 {
+		return nil, nil
+	}
+	annotations := make(map[string]any, len(m.Elements()))
+	for k, v := range m.Elements() {
+		s, ok := v.(types.String)
+		if !ok {
+			return nil, fmt.Errorf("annotation %q: expected a string, got %T", k, v)
+		}
+		if s.IsNull() || s.IsUnknown() {
+			return nil, fmt.Errorf("annotation %q must have a known, non-null value", k)
+		}
+		annotations[k] = s.ValueString()
+	}
+	return annotations, nil
 }
 
 func (r *SignResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -248,4 +282,29 @@ func (r *SignResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *re
 
 func (r *SignResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// AnnotationsValidator is a map validator that checks that no annotation has
+// a null value, which the signed payload cannot represent.
+type AnnotationsValidator struct{}
+
+var _ validator.Map = AnnotationsValidator{}
+
+func (v AnnotationsValidator) Description(context.Context) string {
+	return "annotation values must not be null"
+}
+
+func (v AnnotationsValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v AnnotationsValidator) ValidateMap(ctx context.Context, req validator.MapRequest, resp *validator.MapResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	for k, val := range req.ConfigValue.Elements() {
+		if val.IsNull() {
+			resp.Diagnostics.AddAttributeError(req.Path.AtMapKey(k), "error validating annotations", v.Description(ctx))
+		}
+	}
 }
