@@ -1,6 +1,6 @@
 module github.com/chainguard-dev/terraform-provider-cosign
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/chainguard-dev/terraform-provider-oci v0.2.6
@@ -25,7 +25,7 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
 	github.com/sigstore/cosign/v3 v3.1.4
-	github.com/sigstore/fulcio v1.9.1
+	github.com/sigstore/fulcio v1.10.0
 	github.com/sigstore/policy-controller v0.15.2-0.20260824192639-d4c3f41c394a
 	github.com/sigstore/protobuf-specs v0.5.2
 	github.com/sigstore/rekor v1.5.6
@@ -137,7 +137,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-chi/chi/v5 v5.5.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.7 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/analysis v1.0.1 // indirect
@@ -175,7 +175,7 @@ require (
 	github.com/google/s2a-go v0.1.11 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.23 // indirect
 	github.com/googleapis/gax-go/v2 v2.26.2 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0 // indirect
 	github.com/hashicorp/cli v1.1.7 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-checkpoint v0.5.0 // indirect
@@ -240,13 +240,14 @@ require (
 	github.com/open-policy-agent/opa v1.20.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/pandatix/go-abnf v0.5.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/phuslu/lru v1.0.18 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/posener/complete v1.2.3 // indirect
-	github.com/prometheus/common v0.72.1 // indirect
+	github.com/prometheus/common v0.73.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
@@ -259,7 +260,7 @@ require (
 	github.com/sigstore/rekor-tiles/v2 v2.4.0 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/aws v1.11.3 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/azure v1.11.3 // indirect
-	github.com/sigstore/sigstore/pkg/signature/kms/gcp v1.11.1 // indirect
+	github.com/sigstore/sigstore/pkg/signature/kms/gcp v1.11.2 // indirect
 	github.com/sigstore/sigstore/pkg/signature/kms/hashivault v1.11.3 // indirect
 	github.com/sigstore/timestamp-authority/v2 v2.2.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
@@ -302,7 +303,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/mod v0.42.0 // indirect
@@ -315,7 +316,7 @@ require (
 	google.golang.org/api v0.308.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
 	google.golang.org/grpc v1.85.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
