@@ -714,8 +714,8 @@ github.com/sigstore/policy-controller v0.15.2-0.20260824192639-d4c3f41c394a h1:/
 github.com/sigstore/policy-controller v0.15.2-0.20260824192639-d4c3f41c394a/go.mod h1:yp6BlRMDnFOzX2SY0L5rvg1tmgvQWDAv5hmJFLDv7Ws=
 github.com/sigstore/protobuf-specs v0.5.2 h1:RSWWUY8QrVTxbYH00jY/jg2e7YnjzrpwP+PeHTMll0E=
 github.com/sigstore/protobuf-specs v0.5.2/go.mod h1:DRBzpFuE+LnvQMN10/dU6nBeKwVLGEQ6o2FovN2Rats=
-github.com/sigstore/rekor v1.5.6 h1:iREsvpLfVAn7q+0zKbh+XUB9xEEt6YFGLKkWoYlNYQg=
-github.com/sigstore/rekor v1.5.6/go.mod h1:W4hSHwfvnfasvLdMB3g06zjl+1DuulYasfZePUqBykY=
+github.com/sigstore/rekor v1.6.0 h1:xr8y7lyDgVftnniMem+734HZ0LvBB/KkS6Fxfdi4bCk=
+github.com/sigstore/rekor v1.6.0/go.mod h1:JTZYcdkYReTReOTMyyFaAToFcFrXy+zOfa/csix8jgM=
 github.com/sigstore/rekor-tiles/v2 v2.4.0 h1:Q5vQvZPrHXBzz5/WuF4q7D9RGUm/JzXJQhNGpd4G5Pw=
 github.com/sigstore/rekor-tiles/v2 v2.4.0/go.mod h1:CwJCXjoMBNFKctuPZToeQytli9Nfx1Tvzm09AyJHJNM=
 github.com/sigstore/scaffolding v0.7.22 h1:VjrRzUVRXWGPboglizvGvgq3U8kXnBS5/s4jDCUVwiU=
