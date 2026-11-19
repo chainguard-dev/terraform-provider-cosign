@@ -1,7 +1,10 @@
 package provider
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,9 +13,15 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	ociremote "github.com/sigstore/cosign/v3/pkg/oci/remote"
 	ctypes "github.com/sigstore/cosign/v3/pkg/types"
+	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
 )
 
 func TestAccResourceCosignSign(t *testing.T) {
@@ -411,4 +420,219 @@ data "cosign_verify" %q {
 			})
 		})
 	}
+}
+
+func TestSignAnnotations(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   types.Map
+		want    map[string]any
+		wantErr bool
+	}{{
+		name:  "null",
+		value: types.MapNull(types.StringType),
+	}, {
+		name:  "unknown",
+		value: types.MapUnknown(types.StringType),
+	}, {
+		// An empty map signs the same payload as no annotations at all.
+		name:  "empty",
+		value: types.MapValueMust(types.StringType, map[string]attr.Value{}),
+	}, {
+		name: "values",
+		value: types.MapValueMust(types.StringType, map[string]attr.Value{
+			"commit": types.StringValue("abc123"),
+			"empty":  types.StringValue(""),
+		}),
+		want: map[string]any{"commit": "abc123", "empty": ""},
+	}, {
+		name: "null value",
+		value: types.MapValueMust(types.StringType, map[string]attr.Value{
+			"commit": types.StringNull(),
+		}),
+		wantErr: true,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := signAnnotations(tc.value)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("signAnnotations() = %v, wantErr %v", err, tc.wantErr)
+			}
+			// maps.Equal treats nil and empty alike, but an empty map would
+			// change the signed payload.
+			if (got == nil) != (tc.want == nil) || !maps.Equal(got, tc.want) {
+				t.Errorf("signAnnotations() = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnnotationsValidator(t *testing.T) {
+	ctx := context.Background()
+	v := AnnotationsValidator{}
+
+	for _, tc := range []struct {
+		name    string
+		value   types.Map
+		wantErr bool
+	}{
+		{"null", types.MapNull(types.StringType), false},
+		{"unknown", types.MapUnknown(types.StringType), false},
+		{"empty", types.MapValueMust(types.StringType, map[string]attr.Value{}), false},
+		{"values", types.MapValueMust(types.StringType, map[string]attr.Value{
+			"commit": types.StringValue("abc123"),
+			"empty":  types.StringValue(""),
+		}), false},
+		// An unknown value may still become known at apply.
+		{"unknown value", types.MapValueMust(types.StringType, map[string]attr.Value{
+			"commit": types.StringUnknown(),
+		}), false},
+		{"null value", types.MapValueMust(types.StringType, map[string]attr.Value{
+			"commit": types.StringValue("abc123"),
+			"ref":    types.StringNull(),
+		}), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &validator.MapResponse{}
+			v.ValidateMap(ctx, validator.MapRequest{
+				Path:        path.Root("annotations"),
+				ConfigValue: tc.value,
+			}, resp)
+			if got := resp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("ValidateMap() error = %v, wantErr %v: %s", got, tc.wantErr, resp.Diagnostics.Errors())
+			}
+		})
+	}
+}
+
+// TestAccResourceCosignSignAnnotations signs with annotations in both
+// formats, and checks that the legacy signature carries them.
+func TestAccResourceCosignSignAnnotations(t *testing.T) {
+	keyless := testKeyless(t)
+
+	repo, cleanup := ocitesting.SetupRepository(t, "test")
+	defer cleanup()
+
+	img, err := random.Image(1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dig, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := repo.Digest(dig.String())
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatal(err)
+	}
+
+	config := func(annotations string) string {
+		return keylessVariables + fmt.Sprintf(`
+resource "cosign_sign" "foo" {
+  fulcio_url       = var.fulcio_url
+  rekor_url        = var.rekor_url
+  image            = %q
+  signature_format = "both"
+  annotations      = %s
+}
+
+data "cosign_verify" "bar" {
+  image  = cosign_sign.foo.signed_ref
+  policy = jsonencode({
+    apiVersion = "policy.sigstore.dev/v1beta1"
+    kind       = "ClusterImagePolicy"
+    metadata = {
+      name = "signed-it"
+    }
+    spec = {
+      images = [{
+        glob = %q
+      }]
+      authorities = [{
+        keyless = {
+          url = var.fulcio_url
+          identities = [{
+            issuer  = var.issuer
+            subject = var.subject
+          }]
+        }
+        ctlog = {
+          url = var.rekor_url
+        }
+      }]
+    }
+  })
+}
+`, ref, annotations, ref)
+	}
+
+	// checkAnnotations checks that the image has one legacy signature per
+	// entry of want, each carrying those annotations.
+	checkAnnotations := func(want ...map[string]any) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			se, err := ociremote.SignedEntity(ref)
+			if err != nil {
+				return err
+			}
+			sigs, err := se.Signatures()
+			if err != nil {
+				return err
+			}
+			got, err := sigs.Get()
+			if err != nil {
+				return err
+			}
+			if len(got) != len(want) {
+				return fmt.Errorf("got %d signatures, want %d", len(got), len(want))
+			}
+			for i, sig := range got {
+				b, err := sig.Payload()
+				if err != nil {
+					return err
+				}
+				var payload sigPayload.SimpleContainerImage
+				if err := json.Unmarshal(b, &payload); err != nil {
+					return err
+				}
+				if !maps.Equal(payload.Optional, want[i]) {
+					return fmt.Errorf("signature %d has annotations %v, want %v", i, payload.Optional, want[i])
+				}
+			}
+			return nil
+		}
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Signatures persist in the registry after destroy (by design).
+		CheckDestroy: func(*terraform.State) error { return nil },
+		Steps: []resource.TestStep{{
+			ConfigVariables: keyless,
+			Config:          config(`{ commit = "abc123" }`),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("cosign_sign.foo", "annotations.%", "1"),
+				resource.TestCheckResourceAttr("cosign_sign.foo", "annotations.commit", "abc123"),
+				resource.TestMatchResourceAttr(
+					"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref.String())),
+				checkAnnotations(map[string]any{"commit": "abc123"}),
+			),
+		}, {
+			// Changing the annotations signs again, and SKIPSAME keeps the
+			// signature with the old ones.
+			ConfigVariables: keyless,
+			Config:          config(`{ commit = "def456" }`),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("cosign_sign.foo", "annotations.commit", "def456"),
+				resource.TestMatchResourceAttr(
+					"data.cosign_verify.bar", "verified_ref", regexp.MustCompile("^"+ref.String())),
+				checkAnnotations(map[string]any{"commit": "abc123"}, map[string]any{"commit": "def456"}),
+			),
+		}, {
+			// Signing with the same annotations again matches with SKIPSAME
+			// and writes nothing.
+			ConfigVariables: keyless,
+			Config:          config(`{ commit = "abc123" }`),
+			Check:           checkAnnotations(map[string]any{"commit": "abc123"}, map[string]any{"commit": "def456"}),
+		}},
+	})
 }
