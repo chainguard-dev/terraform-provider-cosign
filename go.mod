@@ -28,7 +28,7 @@ require (
 	github.com/sigstore/fulcio v1.10.0
 	github.com/sigstore/policy-controller v0.15.2-0.20260824192639-d4c3f41c394a
 	github.com/sigstore/protobuf-specs v0.5.2
-	github.com/sigstore/rekor v1.6.0
+	github.com/sigstore/rekor v1.6.1
 	github.com/sigstore/sigstore v1.11.3
 	github.com/sigstore/sigstore-go v1.4.0
 	github.com/transparency-dev/merkle v0.0.2
