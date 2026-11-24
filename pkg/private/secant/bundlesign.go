@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -251,10 +252,10 @@ func SignBundleDigest(ctx context.Context, conflict string, annotations map[stri
 // Like SignBundleDigest it does not recurse into an index's children and never
 // fetches the subjects, so they need not exist in the registry yet. conflict
 // applies to each digest on its own: with SKIPSAME a digest that already
-// carries a bundle with this exact statement is left alone, and nothing is
-// signed when that holds for all of them. SKIPSAME compares payloads byte for
-// byte, so callers must pass the digests in a stable order. A single digest
-// behaves exactly like SignBundleDigest.
+// carries a sign statement naming it is left alone, even when that statement
+// names different siblings (see statementCovers), and nothing is signed when
+// that holds for all of them. A single digest behaves exactly like
+// SignBundleDigest.
 func SignBundleDigests(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, digests []name.Digest, ropt []remote.Option) error {
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 	subjects := make([]signSubject, 0, len(digests))
@@ -611,7 +612,8 @@ func attestBundleSubject(ctx context.Context, conflict string, statements []*typ
 // It returns whether the caller should proceed with the write, after deleting
 // the existing referrers the write supersedes. REPLACE deletes every matching
 // referrer; SKIPSAME keeps one whose payload is byte-identical to the pending
-// write (skipping the write) and deletes the rest. Both modes converge on a
+// write, or that already says the same about this digest (see
+// statementCovers), skipping the write, and deletes the rest. Both modes converge on a
 // single bundle per predicate type, so accumulation cannot outlive the next
 // write even on repositories whose retention never reaps referrer manifests.
 func resolveBundleConflict(digest name.Digest, predicateType string, newPayload []byte, conflict string, ropt []remote.Option, opts []ociremote.Option) (bool, error) {
@@ -667,7 +669,7 @@ func supersedeBundleReferrers(digest name.Digest, newPayload []byte, conflict st
 				}
 				return false, nil, fmt.Errorf("reading referrer %s: %w", m.Digest, err)
 			}
-			if bytes.Equal(payload, newPayload) {
+			if bytes.Equal(payload, newPayload) || statementCovers(payload, newPayload, digest) {
 				d := m.Digest
 				keep = &d
 				break
@@ -691,6 +693,49 @@ func supersedeBundleReferrers(digest name.Digest, newPayload []byte, conflict st
 		deleted = append(deleted, m.Digest)
 	}
 	return keep == nil, deleted, nil
+}
+
+// statementCovers reports whether an existing statement already says about
+// digest what a pending one would: the same predicate type and predicate, with
+// digest among its subjects under the same name and annotations. The two may
+// differ in which other subjects they name.
+//
+// This is what keeps SKIPSAME stable for multi-subject statements. A digest
+// can belong to more than one set of subjects, such as a platform image that
+// two indexes share or that a rebuild left unchanged. Each set's statement
+// names the digest, and comparing payloads alone would have every write for
+// one set replace the other's bundle on that digest, and be replaced in turn.
+func statementCovers(existing, pending []byte, digest name.Digest) bool {
+	h, err := v1.NewHash(digest.DigestStr())
+	if err != nil {
+		return false
+	}
+
+	type statement struct {
+		Type          string           `json:"_type"`
+		PredicateType string           `json:"predicateType"`
+		Subject       []map[string]any `json:"subject"`
+		Predicate     any              `json:"predicate"`
+	}
+	var have, want statement
+	if json.Unmarshal(existing, &have) != nil || json.Unmarshal(pending, &want) != nil {
+		return false
+	}
+	if have.Type != want.Type || have.PredicateType != want.PredicateType || !reflect.DeepEqual(have.Predicate, want.Predicate) {
+		return false
+	}
+
+	subjectFor := func(subjects []map[string]any) map[string]any {
+		for _, subject := range subjects {
+			digests, _ := subject["digest"].(map[string]any)
+			if digests[h.Algorithm] == h.Hex {
+				return subject
+			}
+		}
+		return nil
+	}
+	haveSubject, wantSubject := subjectFor(have.Subject), subjectFor(want.Subject)
+	return haveSubject != nil && wantSubject != nil && reflect.DeepEqual(haveSubject, wantSubject)
 }
 
 // pruneFallbackReferrers removes the given descriptors from the sha256-<subject>

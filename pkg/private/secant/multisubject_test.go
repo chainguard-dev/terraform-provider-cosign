@@ -152,23 +152,27 @@ func TestSignBundleDigestsSignsOnce(t *testing.T) {
 	}
 }
 
-// TestSignBundleDigestsSharedChild covers a rebuild where one platform image
-// is unchanged: the new index and the changed platform get a new statement,
-// and the unchanged platform's digest, which the old statement also names,
-// converges on the new one. The digests left behind keep the old statement,
-// which still names them.
+// TestSignBundleDigestsSharedChild covers a platform image that belongs to two
+// sets of subjects: a rebuild changed the index and one platform and left the
+// other platform's digest as it was. The shared digest already carries a sign
+// statement naming it, so it is left alone, and the two builds can go on being
+// re-run in turn without signing anything more.
 func TestSignBundleDigestsSharedChild(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestRepo(t, false)
 	old := testDigests(t, repo, "b", 3) // index, amd64, arm64
 	fresh := testDigests(t, repo, "c", 2)
-	rebuilt := []signSubject{{digest: fresh[0]}, {digest: old[1]}, {digest: fresh[1]}} // new index, same amd64, new arm64
+	rebuiltDigests := []name.Digest{fresh[0], old[1], fresh[1]} // new index, same amd64, new arm64
 
-	signer := &fakeContentSigner{t: t}
-	var before []signSubject
+	var before, rebuilt []signSubject
 	for _, d := range old {
 		before = append(before, signSubject{digest: d})
 	}
+	for _, d := range rebuiltDigests {
+		rebuilt = append(rebuilt, signSubject{digest: d})
+	}
+
+	signer := &fakeContentSigner{t: t}
 	if err := signBundleStatement(ctx, SkipSame, nil, signer, before, nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -179,26 +183,141 @@ func TestSignBundleDigestsSharedChild(t *testing.T) {
 		t.Errorf("got %d sign operations for two builds, want 2", signer.calls)
 	}
 
-	want := map[string][]string{
-		old[0].DigestStr():   digestStrings(old),
-		old[2].DigestStr():   digestStrings(old),
-		old[1].DigestStr():   {fresh[0].DigestStr(), old[1].DigestStr(), fresh[1].DigestStr()},
-		fresh[0].DigestStr(): {fresh[0].DigestStr(), old[1].DigestStr(), fresh[1].DigestStr()},
-		fresh[1].DigestStr(): {fresh[0].DigestStr(), old[1].DigestStr(), fresh[1].DigestStr()},
+	check := func() {
+		t.Helper()
+		want := map[string][]string{
+			old[0].DigestStr():   digestStrings(old),
+			old[1].DigestStr():   digestStrings(old), // shared: keeps the statement it had
+			old[2].DigestStr():   digestStrings(old),
+			fresh[0].DigestStr(): digestStrings(rebuiltDigests),
+			fresh[1].DigestStr(): digestStrings(rebuiltDigests),
+		}
+		for d, subjects := range want {
+			payloads := bundlePayloads(t, repo.Digest(d), ctypes.CosignSignPredicateType)
+			if len(payloads) != 1 {
+				t.Fatalf("got %d sign bundles for %s, want 1", len(payloads), d)
+			}
+			got := statementSubjects(t, payloads[0])
+			if !slices.Equal(got, subjects) {
+				t.Errorf("statement subjects on %s = %v, want %v", d, got, subjects)
+			}
+			if !slices.Contains(got, d) {
+				t.Errorf("statement on %s does not name it: %v", d, got)
+			}
+			assertFallbackIndexConsistent(t, repo.Digest(d))
+		}
 	}
-	for d, subjects := range want {
-		payloads := bundlePayloads(t, repo.Digest(d), ctypes.CosignSignPredicateType)
-		if len(payloads) != 1 {
-			t.Fatalf("got %d sign bundles for %s, want 1", len(payloads), d)
+	check()
+
+	// Both builds re-run, in turn. Neither replaces the other's bundle on the
+	// shared digest, so neither finds anything to sign.
+	for range 2 {
+		if err := signBundleStatement(ctx, SkipSame, nil, signer, before, nil, nil); err != nil {
+			t.Fatal(err)
 		}
-		got := statementSubjects(t, payloads[0])
-		if !slices.Equal(got, subjects) {
-			t.Errorf("statement subjects on %s = %v, want %v", d, got, subjects)
+		if err := signBundleStatement(ctx, SkipSame, nil, signer, rebuilt, nil, nil); err != nil {
+			t.Fatal(err)
 		}
-		if !slices.Contains(got, d) {
-			t.Errorf("statement on %s does not name it: %v", d, got)
+	}
+	if signer.calls != 2 {
+		t.Errorf("re-running both builds performed %d more sign operations, want 0", signer.calls-2)
+	}
+	check()
+}
+
+// TestAttestBundleSharedChild is the attestation side of a digest shared by
+// two sets of subjects: the digest keeps a statement whose predicate is the
+// one being written, and takes the new statement when the predicate changed.
+func TestAttestBundleSharedChild(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t, false)
+	old := testDigests(t, repo, "6", 3)
+	fresh := testDigests(t, repo, "7", 2)
+	rebuilt := []name.Digest{fresh[0], old[1], fresh[1]}
+
+	attest := func(digests []name.Digest, predicate string) []*types.Statement {
+		t.Helper()
+		statements, err := NewMultiSubjectStatements(digests, strings.NewReader(predicate), testPredicateType)
+		if err != nil {
+			t.Fatal(err)
 		}
-		assertFallbackIndexConsistent(t, repo.Digest(d))
+		withSubjectDescriptors(t, statements)
+		return statements
+	}
+	signer := &slowContentSigner{}
+	signer.t = t
+	signs := func() int {
+		calls, _ := signer.tracker.snapshot()
+		return calls
+	}
+
+	first := attest(old, `{"packages":["a=1"]}`)
+	if err := attestBundle(ctx, SkipSame, first, signer, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same predicate: one signature for the two new digests, and the shared
+	// digest keeps what it has.
+	if err := attestBundle(ctx, SkipSame, attest(rebuilt, `{"packages":["a=1"]}`), signer, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := signs(); got != 2 {
+		t.Errorf("got %d bundle signs, want 2", got)
+	}
+	payloads := bundlePayloads(t, old[1], testPredicateType)
+	if len(payloads) != 1 || !bytes.Equal(payloads[0], first[0].Payload) {
+		t.Errorf("shared digest did not keep its statement")
+	}
+
+	// A different predicate is a different claim, so the shared digest takes
+	// the new statement.
+	changed := attest(rebuilt, `{"packages":["a=2"]}`)
+	if err := attestBundle(ctx, SkipSame, changed, signer, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := signs(); got != 3 {
+		t.Errorf("got %d bundle signs, want 3", got)
+	}
+	for _, d := range rebuilt {
+		payloads := bundlePayloads(t, d, testPredicateType)
+		if len(payloads) != 1 || !bytes.Equal(payloads[0], changed[0].Payload) {
+			t.Errorf("%s does not carry the statement with the changed predicate", d)
+		}
+		assertFallbackIndexConsistent(t, d)
+	}
+}
+
+func TestStatementCovers(t *testing.T) {
+	repo := newTestRepo(t, true)
+	digests := testDigests(t, repo, "8", 3)
+	d := digests[1]
+	const hex0, hex1, hex2 = "8888888888888888888888888888888888888888888888888888888888888880", "8888888888888888888888888888888888888888888888888888888888888881", "8888888888888888888888888888888888888888888888888888888888888882"
+	subject := func(hex, extra string) string {
+		return `{"name":"r","digest":{"sha256":"` + hex + `"}` + extra + `}`
+	}
+	statement := func(predicateType, predicate string, subjects ...string) []byte {
+		return []byte(`{"_type":"https://in-toto.io/Statement/v1","subject":[` + strings.Join(subjects, ",") + `],"predicateType":"` + predicateType + `","predicate":` + predicate + `}`)
+	}
+	pending := statement("p", `{"a":1}`, subject(hex2, ""), subject(hex1, ""))
+
+	for _, tt := range []struct {
+		name     string
+		existing []byte
+		want     bool
+	}{
+		{"different siblings", statement("p", `{"a":1}`, subject(hex0, ""), subject(hex1, "")), true},
+		{"same claim, different formatting", statement("p", `{ "a" : 1 }`, subject(hex1, "")), true},
+		{"does not name the digest", statement("p", `{"a":1}`, subject(hex0, "")), false},
+		{"different predicate", statement("p", `{"a":2}`, subject(hex1, "")), false},
+		{"different predicate type", statement("q", `{"a":1}`, subject(hex1, "")), false},
+		{"different subject annotations", statement("p", `{"a":1}`, subject(hex1, `,"annotations":{"k":"v"}`)), false},
+		{"not a statement", []byte(`not json`), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := statementCovers(tt.existing, pending, d); got != tt.want {
+				t.Errorf("statementCovers() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -111,9 +111,9 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 // artifact is among its subjects.
 //
 // The predicate has to be true of every subject, and everyone who can read the
-// attestation on one digest learns the others. SKIPSAME compares payloads byte
-// for byte, so callers must pass the digests in a stable order. A single digest
-// yields exactly the statement NewStatement does.
+// attestation on one digest learns the others. Pass the digests in a stable
+// order so that a repeat produces the same payload. A single digest yields
+// exactly the statement NewStatement does.
 func NewMultiSubjectStatements(digests []name.Digest, predicate io.Reader, ptype string) ([]*types.Statement, error) {
 	if len(digests) == 0 {
 		return nil, fmt.Errorf("no digests to attest")
