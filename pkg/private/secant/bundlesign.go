@@ -3,12 +3,15 @@ package secant
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/types"
@@ -234,28 +237,84 @@ func SignBundleDigest(ctx context.Context, conflict string, annotations map[stri
 	return signBundleDigest(ctx, conflict, annotations, signer, digest, nil, ropt, opts)
 }
 
+// SignBundleDigests signs the given digests with a single sign-predicate
+// statement that names all of them as subjects, in the order given, and
+// writes the resulting bundle as an OCI referrer of each digest. The whole set
+// costs one signature and one transparency-log entry instead of one per
+// digest, and the bundle verifies on any of the digests: a verifier accepts an
+// in-toto statement when the artifact is among its subjects.
+//
+// It is meant for digests that are signed together and for the same reason,
+// such as an image index and its per-platform manifests. Everyone who can read
+// the signature on one digest learns the others.
+//
+// Like SignBundleDigest it does not recurse into an index's children and never
+// fetches the subjects, so they need not exist in the registry yet. conflict
+// applies to each digest on its own: with SKIPSAME a digest that already
+// carries a bundle with this exact statement is left alone, and nothing is
+// signed when that holds for all of them. SKIPSAME compares payloads byte for
+// byte, so callers must pass the digests in a stable order. A single digest
+// behaves exactly like SignBundleDigest.
+func SignBundleDigests(ctx context.Context, conflict string, annotations map[string]any, signer *BundleSigner, digests []name.Digest, ropt []remote.Option) error {
+	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+	subjects := make([]signSubject, 0, len(digests))
+	for _, d := range digests {
+		subjects = append(subjects, signSubject{digest: d})
+	}
+	return signBundleStatement(ctx, conflict, annotations, signer, subjects, ropt, opts)
+}
+
+// signSubject is one digest to sign. desc, when non-nil, is used verbatim as
+// the referrer's subject descriptor; nil synthesizes a digest-only one.
+// Neither reads the subject.
+type signSubject struct {
+	digest name.Digest
+	desc   *v1.Descriptor
+}
+
 // signBundleDigest signs exactly one digest with a sign-predicate bundle,
 // applying the conflict policy against its existing referrers. subjectDesc,
 // when non-nil, is used verbatim as the referrer's subject descriptor; nil
 // synthesizes a digest-only one. Neither reads the subject.
 func signBundleDigest(ctx context.Context, conflict string, annotations map[string]any, signer contentSigner, digest name.Digest, subjectDesc *v1.Descriptor, ropt []remote.Option, opts []ociremote.Option) error {
-	h, err := v1.NewHash(digest.DigestStr())
-	if err != nil {
-		return fmt.Errorf("parsing digest %q: %w", digest.String(), err)
+	return signBundleStatement(ctx, conflict, annotations, signer, []signSubject{{digest: digest, desc: subjectDesc}}, ropt, opts)
+}
+
+// signBundleStatement signs one sign-predicate statement naming every subject
+// and writes the bundle as a referrer of each subject that the conflict policy
+// says needs it. The statement is signed at most once.
+func signBundleStatement(ctx context.Context, conflict string, annotations map[string]any, signer contentSigner, subjects []signSubject, ropt []remote.Option, opts []ociremote.Option) error {
+	if len(subjects) == 0 {
+		return nil
 	}
 
 	annoStruct, err := structpb.NewStruct(annotations)
 	if err != nil {
 		return fmt.Errorf("converting annotations to protobuf struct: %w", err)
 	}
-	subject := intotov1.ResourceDescriptor{
-		Digest:      map[string]string{h.Algorithm: h.Hex},
-		Annotations: annoStruct,
+
+	hashes := make([]v1.Hash, len(subjects))
+	descriptors := make([]*intotov1.ResourceDescriptor, len(subjects))
+	seen := make(map[string]struct{}, len(subjects))
+	for i, s := range subjects {
+		h, err := v1.NewHash(s.digest.DigestStr())
+		if err != nil {
+			return fmt.Errorf("parsing digest %q: %w", s.digest.String(), err)
+		}
+		if _, ok := seen[s.digest.String()]; ok {
+			return fmt.Errorf("digest %q listed more than once", s.digest.String())
+		}
+		seen[s.digest.String()] = struct{}{}
+		hashes[i] = h
+		descriptors[i] = &intotov1.ResourceDescriptor{
+			Digest:      map[string]string{h.Algorithm: h.Hex},
+			Annotations: annoStruct,
+		}
 	}
 
 	statement := &intotov1.Statement{
 		Type:          intotov1.StatementTypeUri,
-		Subject:       []*intotov1.ResourceDescriptor{&subject},
+		Subject:       descriptors,
 		PredicateType: ctypes.CosignSignPredicateType,
 		Predicate:     &structpb.Struct{},
 	}
@@ -265,11 +324,25 @@ func signBundleDigest(ctx context.Context, conflict string, annotations map[stri
 		return fmt.Errorf("marshaling statement: %w", err)
 	}
 
-	shouldWrite, err := resolveBundleConflict(digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
-	if err != nil {
-		return fmt.Errorf("resolving conflict for %q: %w", digest.String(), err)
+	// Each subject has its own referrers (and, without the native Referrers
+	// API, its own fallback-tag index), so the subjects resolve and are
+	// written independently of one another.
+	write := make([]bool, len(subjects))
+	var resolve errgroup.Group
+	for i, s := range subjects {
+		resolve.Go(func() error {
+			shouldWrite, err := resolveBundleConflict(s.digest, ctypes.CosignSignPredicateType, payload, conflict, ropt, opts)
+			if err != nil {
+				return fmt.Errorf("resolving conflict for %q: %w", s.digest.String(), err)
+			}
+			write[i] = shouldWrite
+			return nil
+		})
 	}
-	if !shouldWrite {
+	if err := resolve.Wait(); err != nil {
+		return err
+	}
+	if !slices.Contains(write, true) {
 		return nil
 	}
 
@@ -280,23 +353,44 @@ func signBundleDigest(ctx context.Context, conflict string, annotations map[stri
 
 	bundleBytes, err := signer.SignContent(ctx, content)
 	if err != nil {
-		return fmt.Errorf("signing bundle for %q: %w", digest.String(), err)
+		return fmt.Errorf("signing bundle for %s: %w", describeSignSubjects(subjects), err)
 	}
 
-	if subjectDesc == nil {
-		subjectDesc = &v1.Descriptor{Digest: h}
+	var writes errgroup.Group
+	for i, s := range subjects {
+		if !write[i] {
+			continue
+		}
+		writes.Go(func() error {
+			subjectDesc := s.desc
+			if subjectDesc == nil {
+				subjectDesc = &v1.Descriptor{Digest: hashes[i]}
+			}
+			if err := writeBundleReferrer(s.digest, bundleBytes, ctypes.CosignSignPredicateType, subjectDesc, ropt); err != nil {
+				return fmt.Errorf("writing sign bundle for %q: %w", s.digest.String(), err)
+			}
+			return nil
+		})
 	}
-	if err := writeBundleReferrer(digest, bundleBytes, ctypes.CosignSignPredicateType, subjectDesc, ropt); err != nil {
-		return fmt.Errorf("writing sign bundle for %q: %w", digest.String(), err)
-	}
+	return writes.Wait()
+}
 
-	return nil
+// describeSignSubjects names the subjects of a sign operation for an error.
+func describeSignSubjects(subjects []signSubject) string {
+	if len(subjects) == 1 {
+		return fmt.Sprintf("%q", subjects[0].digest.String())
+	}
+	return fmt.Sprintf("%q and %d more", subjects[0].digest.String(), len(subjects)-1)
 }
 
 // AttestBundle creates attestations using the cosign v3 bundle format
 // and writes them as OCI referrers. See SignBundle for conflict semantics.
 // Statements may carry a verbatim subject descriptor (Statement.SubjectDescriptor)
 // for subjects that are absent from the target repository.
+//
+// Statements for different subjects that share a byte-identical Payload are one
+// multi-subject statement (see NewMultiSubjectStatements): it is signed once
+// and the bundle is written as a referrer of each of those subjects.
 func AttestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer *BundleSigner, ropt []remote.Option) error {
 	return attestBundle(ctx, conflict, statements, signer, ropt)
 }
@@ -309,9 +403,11 @@ func AttestBundle(ctx context.Context, conflict string, statements []*types.Stat
 // client-maintained sha256-<subject> fallback-tag index with an unconditional
 // read, modify and write (go-containerregistry does so on each remote.Put of a
 // manifest with a subject, and pruneFallbackReferrers does so too), so two
-// writers for one subject can drop each other's entries. Only signing, which
-// is where the network time goes (TSA and Rekor v2 inside sign.Bundle), runs
-// concurrently; see attestBundleSubject.
+// writers for one subject can drop each other's entries. Different subjects
+// share no such state and are handled concurrently. Within a subject only
+// signing, which is where the network time goes (TSA and Rekor v2 inside
+// sign.Bundle), runs concurrently; see attestBundleSubject. AttestConcurrency
+// bounds the signatures in flight across the whole call.
 func attestBundle(ctx context.Context, conflict string, statements []*types.Statement, signer contentSigner, ropt []remote.Option) error {
 	if len(statements) == 0 {
 		return nil
@@ -330,12 +426,88 @@ func attestBundle(ctx context.Context, conflict string, statements []*types.Stat
 		groups[key] = append(groups[key], stmt)
 	}
 
+	shared := newSharedSigner(signer, attestConcurrencyLimit())
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(attestConcurrencyLimit())
 	for _, key := range subjects {
-		if err := attestBundleSubject(ctx, conflict, groups[key], signer, ropt, ociOpts); err != nil {
-			return err
+		g.Go(func() error {
+			return attestBundleSubject(gctx, conflict, groups[key], shared, ropt, ociOpts)
+		})
+	}
+	return g.Wait()
+}
+
+// sharedSigner signs each distinct payload once for all the subjects of one
+// AttestBundle call that carry it, and bounds the signatures in flight.
+//
+// A payload shared between subjects is a multi-subject statement, which needs
+// a single signature (and a single transparency-log entry) however many
+// subjects it is attached to. Two statements with the same payload on one
+// subject are a different thing — duplicates that APPEND writes separately —
+// so signatures are keyed by the payload and by how many times it has already
+// occurred within the subject.
+type sharedSigner struct {
+	inner contentSigner
+	sem   chan struct{}
+
+	mu    sync.Mutex
+	calls map[sharedSignKey]*sharedSignCall
+}
+
+type sharedSignKey struct {
+	payload    [sha256.Size]byte
+	occurrence int
+}
+
+type sharedSignCall struct {
+	done   chan struct{}
+	bundle []byte
+	err    error
+}
+
+func newSharedSigner(inner contentSigner, limit int) *sharedSigner {
+	return &sharedSigner{
+		inner: inner,
+		sem:   make(chan struct{}, limit),
+		calls: map[sharedSignKey]*sharedSignCall{},
+	}
+}
+
+// sign returns the bundle for payload, signing it unless another subject's
+// statement with the same payload and occurrence already has or is doing so.
+func (s *sharedSigner) sign(ctx context.Context, payload []byte, occurrence int) ([]byte, error) {
+	key := sharedSignKey{payload: sha256.Sum256(payload), occurrence: occurrence}
+
+	s.mu.Lock()
+	call, ok := s.calls[key]
+	if !ok {
+		call = &sharedSignCall{done: make(chan struct{})}
+		s.calls[key] = call
+	}
+	s.mu.Unlock()
+
+	if ok {
+		select {
+		case <-call.done:
+			return call.bundle, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-	return nil
+
+	defer close(call.done)
+	select {
+	case s.sem <- struct{}{}:
+		defer func() { <-s.sem }()
+	case <-ctx.Done():
+		call.err = ctx.Err()
+		return nil, call.err
+	}
+	call.bundle, call.err = s.inner.SignContent(ctx, &sign.DSSEData{
+		Data:        payload,
+		PayloadType: ctypes.IntotoPayloadType,
+	})
+	return call.bundle, call.err
 }
 
 // attestBundleSubject attests the statements of one subject in three passes:
@@ -343,7 +515,7 @@ func attestBundle(ctx context.Context, conflict string, statements []*types.Stat
 // the subject's referrers, signs the statements that still need writing with
 // bounded overlap (see AttestConcurrency), and then writes the referrers one
 // at a time in statement order.
-func attestBundleSubject(ctx context.Context, conflict string, statements []*types.Statement, signer contentSigner, ropt []remote.Option, ociOpts []ociremote.Option) error {
+func attestBundleSubject(ctx context.Context, conflict string, statements []*types.Statement, signer *sharedSigner, ropt []remote.Option, ociOpts []ociremote.Option) error {
 	subject := statements[0].Digest
 
 	predicateTypes := make([]string, len(statements))
@@ -398,20 +570,20 @@ func attestBundleSubject(ctx context.Context, conflict string, statements []*typ
 		return fmt.Errorf("unknown conflict mode: %q", conflict)
 	}
 
-	// Sign with bounded overlap. BundleSigner supports concurrent callers.
+	// Sign with bounded overlap. BundleSigner supports concurrent callers. A
+	// payload that another subject of this call carries too is signed once
+	// between them (see sharedSigner).
 	bundles := make([][]byte, len(statements))
+	occurrences := map[string]int{}
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(attestConcurrencyLimit())
 	for i, stmt := range statements {
+		occurrence := occurrences[string(stmt.Payload)]
+		occurrences[string(stmt.Payload)]++
 		if !write[i] {
 			continue
 		}
 		g.Go(func() error {
-			content := &sign.DSSEData{
-				Data:        stmt.Payload,
-				PayloadType: ctypes.IntotoPayloadType,
-			}
-			bundleBytes, err := signer.SignContent(gctx, content)
+			bundleBytes, err := signer.sign(gctx, stmt.Payload, occurrence)
 			if err != nil {
 				return fmt.Errorf("signing attestation bundle for %q: %w", stmt.Digest.String(), err)
 			}
