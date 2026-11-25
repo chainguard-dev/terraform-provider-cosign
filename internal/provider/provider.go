@@ -249,6 +249,16 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	ropts := []remote.Option{
 		remote.WithAuthFromKeychain(kc),
 		remote.WithUserAgent("terraform-provider-cosign/" + p.version),
+		// Registries throttle bursts of pushes (e.g. 429 Too Many Requests),
+		// often with an account-wide rate. The default backoff gives up after
+		// about 4s with little jitter, so parallel copies retry in lockstep and
+		// fail together. Retry for about a minute and spread the retries out.
+		remote.WithRetryBackoff(remote.Backoff{
+			Duration: time.Second,
+			Factor:   2.0,
+			Jitter:   0.5,
+			Steps:    7,
+		}),
 	}
 
 	puller, err := remote.NewPuller(ropts...)
