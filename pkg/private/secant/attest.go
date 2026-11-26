@@ -17,6 +17,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	intotov1 "github.com/in-toto/attestation/go/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"github.com/sigstore/cosign/v3/pkg/cosign/attestation"
@@ -96,6 +97,82 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types
 		Type:    ptype,
 		Payload: payload,
 	}, nil
+}
+
+// NewMultiSubjectStatements generates one statement whose subject list names
+// every digest, in the order given, and returns it once per digest: element i
+// has Digest digests[i], and all elements share the same Payload.
+//
+// AttestBundle signs a payload shared this way once and writes the resulting
+// bundle as a referrer of each digest, so an attestation that is true of
+// several digests (an image index and its per-platform manifests, say) costs
+// one transparency-log entry instead of one per digest. Verifiers accept the
+// bundle on any of the digests, because an in-toto statement matches when the
+// artifact is among its subjects.
+//
+// The predicate has to be true of every subject, and everyone who can read the
+// attestation on one digest learns the others. Pass the digests in a stable
+// order so that a repeat produces the same payload. A single digest yields
+// exactly the statement NewStatement does.
+func NewMultiSubjectStatements(digests []name.Digest, predicate io.Reader, ptype string) ([]*types.Statement, error) {
+	if len(digests) == 0 {
+		return nil, fmt.Errorf("no digests to attest")
+	}
+	if err := checkDistinctDigests(digests); err != nil {
+		return nil, err
+	}
+
+	first, err := v1.NewHash(digests[0].Identifier())
+	if err != nil {
+		return nil, err
+	}
+	sh, err := attestation.GenerateStatement(attestation.GenerateOpts{
+		Predicate: predicate,
+		Type:      ptype,
+		Digest:    first.Hex,
+		Repo:      digests[0].Repository.String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range digests[1:] {
+		h, err := v1.NewHash(d.Identifier())
+		if err != nil {
+			return nil, err
+		}
+		sh.Subject = append(sh.Subject, &intotov1.ResourceDescriptor{
+			Name:   d.Repository.String(),
+			Digest: map[string]string{h.Algorithm: h.Hex},
+		})
+	}
+
+	payload, err := json.Marshal(sh)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling statement: %w", err)
+	}
+
+	statements := make([]*types.Statement, 0, len(digests))
+	for _, d := range digests {
+		statements = append(statements, &types.Statement{
+			Digest:  d,
+			Type:    ptype,
+			Payload: payload,
+		})
+	}
+	return statements, nil
+}
+
+// checkDistinctDigests rejects a subject list that names a digest twice.
+func checkDistinctDigests(digests []name.Digest) error {
+	seen := make(map[string]struct{}, len(digests))
+	for _, d := range digests {
+		key := d.String()
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("digest %q listed more than once", key)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
 }
 
 // AttestEntity is roughly equivalent to cosign attest.
