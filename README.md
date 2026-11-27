@@ -42,6 +42,12 @@ resource "ko_build" "image-build" {
 
 resource "cosign_sign" "example" {
   image = ko_build.image-build.image_ref
+
+  // Optional annotations to include in the signed payload, like
+  // "cosign sign -a commit=...".
+  annotations = {
+    commit = var.commit-sha
+  }
 }
 
 resource "cosign_attest" "example" {

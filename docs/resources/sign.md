@@ -21,6 +21,7 @@ This signs the provided image digest with cosign.
 
 ### Optional
 
+- `annotations` (Map of String) Annotations to include in the signed payload, like the `-a key=value` flag of `cosign sign`. For 'legacy' signatures they are the payload's optional properties, which `cosign verify -a` checks; for 'bundle' signatures they are the annotations of the signed statement's subject. Changing them signs the image again.
 - `conflict` (String) How to handle conflicting signature values
 - `fulcio_url` (String) Address of sigstore PKI server (default https://fulcio.sigstore.dev). For 'bundle' signing, a non-default fulcio_url or rekor_url signs against Fulcio and Rekor v1 at these addresses instead of the TUF-configured endpoints (the trusted root still comes from TUF), and cannot be combined with the provider's use_rekor_v2.
 - `rekor_url` (String) Address of rekor transparency log server (default https://rekor.sigstore.dev). See fulcio_url for how it applies to 'bundle' signing.
