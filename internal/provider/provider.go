@@ -246,32 +246,11 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 	}
 
 	kc := authn.NewMultiKeychain(google.Keychain, authn.RefreshingKeychain(authn.DefaultKeychain, 30*time.Minute))
-	ropts := []remote.Option{
-		remote.WithAuthFromKeychain(kc),
-		remote.WithUserAgent("terraform-provider-cosign/" + p.version),
-		// Registries throttle bursts of pushes (e.g. 429 Too Many Requests),
-		// often with an account-wide rate. The default backoff gives up after
-		// about 4s with little jitter, so parallel copies retry in lockstep and
-		// fail together. Retry for about a minute and spread the retries out.
-		remote.WithRetryBackoff(remote.Backoff{
-			Duration: time.Second,
-			Factor:   2.0,
-			Jitter:   0.5,
-			Steps:    7,
-		}),
-	}
-
-	puller, err := remote.NewPuller(ropts...)
+	ropts, err := registryOptions(kc, p.version)
 	if err != nil {
 		resp.Diagnostics.AddError("Configuring cosign provider options", err.Error())
 		return
 	}
-	pusher, err := remote.NewPusher(ropts...)
-	if err != nil {
-		resp.Diagnostics.AddError("Configuring cosign provider options", err.Error())
-		return
-	}
-	ropts = append(ropts, remote.Reuse(puller), remote.Reuse(pusher))
 
 	attestationEntryType := "intoto"
 	if !data.DefaultAttestationEntryType.IsNull() && !data.DefaultAttestationEntryType.IsUnknown() {
@@ -420,4 +399,39 @@ func (v DurationValidator) ValidateString(ctx context.Context, req validator.Str
 	if _, err := time.ParseDuration(req.ConfigValue.ValueString()); err != nil {
 		resp.Diagnostics.AddError("error validating timeout", err.Error())
 	}
+}
+
+// registryOptions returns the registry options every resource shares, with a
+// Puller and Pusher so they reuse token exchanges.
+//
+// The slice is clipped to its length. cosign's
+// RegistryOptions.GetRegistryClientOpts appends remote.WithContext(ctx) to it
+// per call, and a spare slot would let concurrent resources write their
+// contexts into the same backing array, so one resource could run on another
+// resource's context and fail with "context canceled" once that one finished.
+func registryOptions(kc authn.Keychain, version string) ([]remote.Option, error) {
+	ropts := []remote.Option{
+		remote.WithAuthFromKeychain(kc),
+		remote.WithUserAgent("terraform-provider-cosign/" + version),
+		// Registries throttle bursts of pushes (e.g. 429 Too Many Requests),
+		// often with an account-wide rate. The default backoff gives up after
+		// about 4s with little jitter, so parallel copies retry in lockstep and
+		// fail together. Retry for about a minute and spread the retries out.
+		remote.WithRetryBackoff(remote.Backoff{
+			Duration: time.Second,
+			Factor:   2.0,
+			Jitter:   0.5,
+			Steps:    7,
+		}),
+	}
+
+	puller, err := remote.NewPuller(ropts...)
+	if err != nil {
+		return nil, err
+	}
+	pusher, err := remote.NewPusher(ropts...)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clip(append(ropts, remote.Reuse(puller), remote.Reuse(pusher))), nil
 }
