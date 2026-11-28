@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -418,10 +419,33 @@ func keychain() authn.Keychain {
 		google.Keychain,
 		authn.RefreshingKeychain(authn.DefaultKeychain, 30*time.Minute),
 		authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard))),
-		authn.NewKeychainFromHelper(credhelper.NewACRCredentialsHelper()),
+		authn.NewKeychainFromHelper(azureHelper{credhelper.NewACRCredentialsHelper()}),
 		authn.NewKeychainFromHelper(alibabaacr.NewACRHelper().WithLoggerOut(io.Discard)),
 		github.Keychain,
 	)
+}
+
+// azureHostRE matches the hosts of Azure Container Registries in each Azure
+// cloud.
+var azureHostRE = regexp.MustCompile(`^.+\.azurecr\.(io|cn|de|us)$`)
+
+// azureHelper limits the Azure ACR credential helper to ACR hosts and
+// mcr.microsoft.com. The helper's own check is an unanchored regexp, so it
+// would also send the ambient Azure AD token to a host such as
+// evil.azurecr.io.attacker.com (GO-2026-6225).
+type azureHelper struct{ authn.Helper }
+
+func (h azureHelper) Get(serverURL string) (string, string, error) {
+	// The helper parses serverURL the same way to find the host it sends the
+	// token to.
+	u, err := url.Parse("https://" + serverURL)
+	if err != nil {
+		return "", "", err
+	}
+	if host := u.Hostname(); host != "mcr.microsoft.com" && !azureHostRE.MatchString(host) {
+		return "", "", fmt.Errorf("%q is not an Azure Container Registry", serverURL)
+	}
+	return h.Helper.Get(serverURL)
 }
 
 // registryOptions returns the registry options every resource shares, with a

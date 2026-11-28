@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -65,6 +66,76 @@ func TestKeychainUsesCredentialHelpers(t *testing.T) {
 			}
 			if *got != tc.want {
 				t.Errorf("Authorization() = %+v, want %+v", *got, tc.want)
+			}
+		})
+	}
+}
+
+// recordingHelper is an authn.Helper that records the registries it is asked
+// about and answers each with a refresh token.
+type recordingHelper struct{ asked []string }
+
+func (h *recordingHelper) Get(serverURL string) (string, string, error) {
+	h.asked = append(h.asked, serverURL)
+	return "<token>", "refresh-token", nil
+}
+
+// TestAzureHelperOnlyAsksForACRHosts checks that the Azure ACR credential
+// helper is only asked about ACR hosts and mcr.microsoft.com. Its own check
+// also accepts hosts such as evil.azurecr.io.attacker.com and would send them
+// the ambient Azure AD token (GO-2026-6225).
+func TestAzureHelperOnlyAsksForACRHosts(t *testing.T) {
+	for _, tc := range []struct {
+		registry string
+		allowed  bool
+	}{{
+		registry: "myregistry.azurecr.io",
+		allowed:  true,
+	}, {
+		registry: "myregistry.azurecr.us",
+		allowed:  true,
+	}, {
+		registry: "myregistry.azurecr.io:443",
+		allowed:  true,
+	}, {
+		registry: "mcr.microsoft.com",
+		allowed:  true,
+	}, {
+		registry: "evil.azurecr.io.attacker.com",
+		allowed:  false,
+	}, {
+		registry: "evilazurecr.io",
+		allowed:  false,
+	}, {
+		registry: "ghcr.io",
+		allowed:  false,
+	}} {
+		t.Run(tc.registry, func(t *testing.T) {
+			reg, err := name.NewRegistry(tc.registry)
+			if err != nil {
+				t.Fatalf("name.NewRegistry() = %v", err)
+			}
+			h := &recordingHelper{}
+			auth, err := authn.NewKeychainFromHelper(azureHelper{h}).Resolve(reg)
+			if err != nil {
+				t.Fatalf("Resolve() = %v", err)
+			}
+			got, err := auth.Authorization()
+			if err != nil {
+				t.Fatalf("Authorization() = %v", err)
+			}
+
+			var want authn.AuthConfig
+			var wantAsked []string
+			if tc.allowed {
+				want = authn.AuthConfig{Username: "<token>", IdentityToken: "refresh-token"}
+				wantAsked = []string{tc.registry}
+			}
+			if *got != want {
+				t.Errorf("Authorization() = %+v, want %+v", *got, want)
+			}
+			if !slices.Equal(h.asked, wantAsked) {
+				t.Errorf("helper asked about %q, want %q", h.asked, wantAsked)
 			}
 		})
 	}
