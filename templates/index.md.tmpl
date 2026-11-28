@@ -33,6 +33,15 @@ OCI providers such as [`ko`](https://github.com/ko-build/terraform-provider-ko),
 
 {{ tffile "examples/resource/cosign_attest.tf" }}
 
+## Registry Authentication
+
+The provider authenticates to registries with, in order:
+
+- Google's ambient credentials, for Artifact Registry and Container Registry.
+- The Docker config (`$DOCKER_CONFIG/config.json`, or `~/.docker/config.json`), including any `credHelpers` or `credsStore` it configures.
+- The [Amazon ECR](https://github.com/awslabs/amazon-ecr-credential-helper), [Azure ACR](https://github.com/chrismellard/docker-credential-acr-env) and [Alibaba Cloud ACR](https://github.com/mozillazg/docker-credential-acr-helper) credential helpers, built into the provider, which use the ambient credentials of those clouds (e.g. `AWS_*` or `AZURE_*` environment variables).
+- `GITHUB_TOKEN` (and `GITHUB_ACTOR`, if set) for `ghcr.io`.
+
 ## Environment Variables
 
 | Name                    | Default                          | Description                                                                                    |
