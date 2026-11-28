@@ -3,15 +3,19 @@ package provider
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"slices"
 	"sync"
 	"time"
 
+	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant"
 	"github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/fulcio"
 	rclient "github.com/chainguard-dev/terraform-provider-cosign/pkg/private/secant/rekor/client"
+	"github.com/chrismellard/docker-credential-acr-env/pkg/credhelper"
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/authn/github"
 	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -20,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	alibabaacr "github.com/mozillazg/docker-credential-acr-helper/pkg/credhelper"
 	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
 	"github.com/sigstore/cosign/v3/pkg/cosign"
 	"github.com/sigstore/fulcio/pkg/api"
@@ -245,7 +250,7 @@ func (p *Provider) Configure(ctx context.Context, req provider.ConfigureRequest,
 		return
 	}
 
-	kc := authn.NewMultiKeychain(google.Keychain, authn.RefreshingKeychain(authn.DefaultKeychain, 30*time.Minute))
+	kc := keychain()
 	ropts, err := registryOptions(kc, p.version)
 	if err != nil {
 		resp.Diagnostics.AddError("Configuring cosign provider options", err.Error())
@@ -399,6 +404,24 @@ func (v DurationValidator) ValidateString(ctx context.Context, req validator.Str
 	if _, err := time.ParseDuration(req.ConfigValue.ValueString()); err != nil {
 		resp.Diagnostics.AddError("error validating timeout", err.Error())
 	}
+}
+
+// keychain returns the keychain every resource and data source authenticates
+// to registries with. It tries, in order, Google's ambient credentials, the
+// Docker config (including any credential helpers it configures), and then the
+// ECR, ACR, Alibaba Cloud ACR and GitHub credential helpers, which pick up
+// ambient cloud credentials (e.g. AWS_*, AZURE_* or GITHUB_TOKEN) without any
+// Docker config. These are the helpers of cosign's Kubernetes keychain, which
+// the resources used before they shared one set of registry options.
+func keychain() authn.Keychain {
+	return authn.NewMultiKeychain(
+		google.Keychain,
+		authn.RefreshingKeychain(authn.DefaultKeychain, 30*time.Minute),
+		authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard))),
+		authn.NewKeychainFromHelper(credhelper.NewACRCredentialsHelper()),
+		authn.NewKeychainFromHelper(alibabaacr.NewACRHelper().WithLoggerOut(io.Discard)),
+		github.Keychain,
+	)
 }
 
 // registryOptions returns the registry options every resource shares, with a
